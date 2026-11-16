@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://accounts.google.com/gsi/client; style-src 'self' https://accounts.google.com/gsi/style; connect-src 'self' https://www.googleapis.com https://accounts.google.com https://oauth2.googleapis.com; frame-src https://accounts.google.com; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta name="referrer" content="no-referrer">
+  <meta name="theme-color" content="#0f172a">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="CryptoPwd">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>CryptoPwd</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="css/style.css">
+  <script type="module" src="js/app.js"></script>
+</head>
+<body>
+  <!-- AVVIO -->
+  <section id="screen-loading" class="screen center">
+    <div class="logo" aria-hidden="true"></div>
+  </section>
+
+  <!-- PRIMO AVVIO -->
+  <section id="screen-setup" class="screen center" hidden>
+    <div class="card narrow">
+      <div class="logo" aria-hidden="true"></div>
+      <h1>CryptoPwd</h1>
+      <p class="muted">Le tue password, cifrate sul dispositivo e sincronizzate sul tuo Google Drive.</p>
+
+      <form id="form-create" class="stack" autocomplete="off">
+        <h2>Crea un nuovo archivio</h2>
+        <label>Password principale
+          <input id="create-pwd" type="password" required minlength="10" autocomplete="new-password">
+        </label>
+        <div class="meter"><div id="create-meter"></div></div>
+        <label>Ripeti password principale
+          <input id="create-pwd2" type="password" required minlength="10" autocomplete="new-password">
+        </label>
+        <label class="check"><input id="create-drive" type="checkbox" checked> Sincronizza con Google Drive</label>
+        <p class="warn">⚠️ La password principale non è recuperabile in alcun modo: se la dimentichi perdi l'accesso ai dati. Scrivila su carta e conservala in un luogo sicuro.</p>
+        <button class="btn primary" type="submit">Crea archivio</button>
+      </form>
+
+      <div class="divider"><span>oppure</span></div>
+      <button id="btn-restore" class="btn" type="button">Ripristina da Google Drive</button>
+      <p id="drive-unconfigured" class="muted small" hidden>Google Drive non configurato: imposta il Client ID in <code>js/config.js</code>.</p>
+    </div>
+  </section>
+
+  <!-- BLOCCO -->
+  <section id="screen-lock" class="screen center" hidden>
+    <form id="form-unlock" class="card narrow stack" autocomplete="off">
+      <div class="logo" aria-hidden="true"></div>
+      <h1>CryptoPwd</h1>
+      <label>Password principale
+        <input id="unlock-pwd" type="password" required autocomplete="current-password" autofocus>
+      </label>
+      <p id="unlock-error" class="error" hidden></p>
+      <button id="btn-unlock" class="btn primary" type="submit">Sblocca</button>
+      <p id="lock-info" class="muted small"></p>
+    </form>
+  </section>
+
+  <!-- ELENCO -->
+  <section id="screen-main" class="screen" hidden>
+    <header class="topbar">
+      <h1 class="brand">CryptoPwd</h1>
+      <button id="btn-sync" class="chip" type="button" title="Stato sincronizzazione"><span id="sync-dot" class="dot"></span><span id="sync-label">—</span></button>
+      <button id="btn-privacy" class="icon-btn" type="button" aria-label="Modalità riservata" aria-pressed="false">🛡</button>
+      <button id="btn-settings" class="icon-btn" type="button" aria-label="Impostazioni">⚙︎</button>
+      <button id="btn-lock" class="icon-btn" type="button" aria-label="Blocca">🔒</button>
+    </header>
+    <div class="searchbar">
+      <input id="search" type="search" placeholder="Cerca…" autocomplete="off" spellcheck="false">
+    </div>
+    <nav class="filters" aria-label="Filtri">
+      <div class="chips-row">
+        <div id="subj-chips" class="chips" role="tablist" aria-label="Soggetti"></div>
+        <button id="btn-manage" class="icon-btn" type="button" aria-label="Gestisci soggetti e categorie" title="Gestisci soggetti e categorie">✎</button>
+      </div>
+      <div id="cat-chips" class="chips sub" role="tablist" aria-label="Categorie" hidden></div>
+    </nav>
+    <ul id="list" class="list"></ul>
+    <p id="empty" class="muted center-text" hidden>Nessuna password salvata. Tocca <b>+</b> per aggiungerne una.</p>
+    <button id="btn-add" class="fab" type="button" aria-label="Aggiungi">+</button>
+  </section>
+
+  <!-- DETTAGLIO -->
+  <dialog id="dlg-detail">
+    <div class="dlg">
+      <header class="dlg-head">
+        <h2 id="d-title"></h2>
+        <button class="icon-btn" data-close type="button" aria-label="Chiudi">✕</button>
+      </header>
+      <p id="d-path" class="path"></p>
+      <div class="fields">
+        <div class="field" id="d-user-row">
+          <span class="lbl">Utente</span>
+          <span id="d-user" class="val"></span>
+          <button class="icon-btn" data-copy="username" type="button" aria-label="Copia utente">⧉</button>
+        </div>
+        <div class="field" id="d-pwd-row">
+          <span class="lbl">Password</span>
+          <span id="d-pwd" class="val mono">••••••••</span>
+          <button id="d-reveal" class="icon-btn" type="button" aria-label="Mostra">👁</button>
+          <button class="icon-btn" data-copy="password" type="button" aria-label="Copia password">⧉</button>
+        </div>
+        <div class="field" id="d-url-row">
+          <span class="lbl">Sito</span>
+          <a id="d-url" class="val" target="_blank" rel="noopener noreferrer"></a>
+          <button class="icon-btn" data-copy="url" type="button" aria-label="Copia sito">⧉</button>
+        </div>
+        <div class="field col" id="d-notes-row">
+          <span class="lbl">Note</span>
+          <pre id="d-notes" class="val notes"></pre>
+        </div>
+        <p id="d-updated" class="muted small"></p>
+      </div>
+      <footer class="dlg-foot">
+        <button id="d-edit" class="btn primary" type="button">Modifica</button>
+      </footer>
+    </div>
+  </dialog>
+
+  <!-- MODIFICA -->
+  <dialog id="dlg-edit">
+    <form id="form-edit" class="dlg" autocomplete="off">
+      <header class="dlg-head">
+        <h2 id="e-heading">Nuova voce</h2>
+        <button class="icon-btn" data-close type="button" aria-label="Chiudi">✕</button>
+      </header>
+      <div class="stack">
+        <div class="two-col">
+          <label>Soggetto <select id="e-subject"></select></label>
+          <label>Categoria <select id="e-category"></select></label>
+        </div>
+        <label>Nome <input id="e-title" required maxlength="200" placeholder="es. Banca, Gmail…"></label>
+        <label>Utente / email <input id="e-user" maxlength="500" autocapitalize="off" spellcheck="false"></label>
+        <label>Password
+          <span class="input-row">
+            <input id="e-pwd" type="password" maxlength="1000" autocapitalize="off" spellcheck="false" autocomplete="off">
+            <button id="e-reveal" class="icon-btn" type="button" aria-label="Mostra">👁</button>
+            <button id="e-gen" class="icon-btn" type="button" aria-label="Genera">🎲</button>
+          </span>
+        </label>
+        <div class="gen-opts">
+          <label class="inline">Lunghezza <input id="g-len" type="number" min="8" max="64" value="20"></label>
+          <label class="check"><input id="g-sym" type="checkbox" checked> Simboli</label>
+        </div>
+        <label>Sito web <input id="e-url" type="text" inputmode="url" maxlength="2000" autocapitalize="off" spellcheck="false" placeholder="https://…"></label>
+        <label>Note <textarea id="e-notes" rows="4" maxlength="10000"></textarea></label>
+      </div>
+      <footer class="dlg-foot">
+        <button id="e-delete" class="btn danger" type="button" hidden>Elimina</button>
+        <span class="grow"></span>
+        <button class="btn" data-close type="button">Annulla</button>
+        <button class="btn primary" type="submit">Salva</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <!-- IMPOSTAZIONI -->
+  <dialog id="dlg-settings">
+    <div class="dlg">
+      <header class="dlg-head">
+        <h2>Impostazioni</h2>
+        <button class="icon-btn" data-close type="button" aria-label="Chiudi">✕</button>
+      </header>
+      <div class="stack">
+        <h3>Google Drive</h3>
+        <p id="s-drive-status" class="muted small"></p>
+        <div class="row wrap">
+          <button id="s-drive-connect" class="btn" type="button">Collega Google Drive</button>
+          <button id="s-sync-now" class="btn" type="button">Sincronizza ora</button>
+          <button id="s-drive-disconnect" class="btn" type="button">Scollega</button>
+        </div>
+
+        <h3>Organizzazione</h3>
+        <button id="s-manage" class="btn" type="button">Gestisci soggetti e categorie</button>
+
+        <h3>Sicurezza</h3>
+        <label class="check"><input id="s-privacy" type="checkbox"> Modalità riservata (anche dal pulsante 🛡)</label>
+        <p class="muted small">Da usare quando qualcuno potrebbe vedere lo schermo, ad esempio con un desktop remoto collegato: utenti, password e note restano coperti e si vedono solo tenendo premuto, il contenuto si nasconde quando la finestra perde il focus e prima di ogni copia compare un avviso. Premi due volte Esc per bloccare subito l'app.</p>
+        <label class="inline">Blocco automatico dopo
+          <select id="s-autolock">
+            <option value="1">1 minuto</option>
+            <option value="2">2 minuti</option>
+            <option value="5">5 minuti</option>
+            <option value="15">15 minuti</option>
+            <option value="60">60 minuti</option>
+          </select>
+        </label>
+        <button id="s-change-pwd" class="btn" type="button">Cambia password principale</button>
+
+        <h3>Backup e importazione</h3>
+        <div class="row wrap">
+          <button id="s-export" class="btn" type="button">Esporta backup cifrato</button>
+          <button id="s-import" class="btn" type="button">Importa backup / CSV</button>
+          <input id="s-import-file" type="file" accept=".json,.csv,application/json,text/csv" hidden>
+        </div>
+        <p class="muted small">Il CSV può arrivare da Chrome, Firefox, Bitwarden ecc. Dopo l'importazione elimina il file CSV: è in chiaro.</p>
+
+        <h3>Zona pericolosa</h3>
+        <button id="s-wipe" class="btn danger" type="button">Cancella dati da questo dispositivo</button>
+        <p class="muted small">Rimuove solo la copia locale. Il vault su Google Drive resta intatto.</p>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- CAMBIO PASSWORD -->
+  <dialog id="dlg-chpwd">
+    <form id="form-chpwd" class="dlg" autocomplete="off">
+      <header class="dlg-head">
+        <h2>Cambia password principale</h2>
+        <button class="icon-btn" data-close type="button" aria-label="Chiudi">✕</button>
+      </header>
+      <div class="stack">
+        <label>Password attuale <input id="c-old" type="password" required autocomplete="current-password"></label>
+        <label>Nuova password <input id="c-new" type="password" required minlength="10" autocomplete="new-password"></label>
+        <div class="meter"><div id="c-meter"></div></div>
+        <label>Ripeti nuova password <input id="c-new2" type="password" required minlength="10" autocomplete="new-password"></label>
+        <p id="c-error" class="error" hidden></p>
+      </div>
+      <footer class="dlg-foot">
+        <span class="grow"></span>
+        <button class="btn" data-close type="button">Annulla</button>
+        <button class="btn primary" type="submit">Cambia</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <!-- SOGGETTI E CATEGORIE -->
+  <dialog id="dlg-manage">
+    <div class="dlg">
+      <header class="dlg-head">
+        <h2>Soggetti e categorie</h2>
+        <button class="icon-btn" data-close type="button" aria-label="Chiudi">✕</button>
+      </header>
+      <p class="muted small">Ogni soggetto (es. te, un familiare, la tua azienda) può avere più categorie (es. Banca, Email, Lavoro).</p>
+      <ul id="m-tree" class="tree"></ul>
+      <p id="m-empty" class="muted small" hidden>Nessun soggetto. Creane uno per iniziare.</p>
+      <footer class="dlg-foot">
+        <button id="m-add-subject" class="btn primary" type="button">+ Nuovo soggetto</button>
+      </footer>
+    </div>
+  </dialog>
+
+  <!-- RICHIESTA PASSWORD / TESTO GENERICA -->
+  <dialog id="dlg-prompt">
+    <form id="form-prompt" class="dlg" autocomplete="off">
+      <header class="dlg-head"><h2 id="p-title"></h2></header>
+      <div class="stack">
+        <p id="p-msg" class="muted"></p>
+        <input id="p-input" type="password" required autocomplete="current-password" list="p-suggest">
+        <datalist id="p-suggest"></datalist>
+        <p id="p-error" class="error" hidden></p>
+      </div>
+      <footer class="dlg-foot">
+        <span class="grow"></span>
+        <button id="p-cancel" class="btn" type="button">Annulla</button>
+        <button class="btn primary" type="submit">OK</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <!-- CONFERMA -->
+  <dialog id="dlg-confirm">
+    <form id="form-confirm" class="dlg">
+      <header class="dlg-head"><h2 id="cf-title"></h2></header>
+      <p id="cf-msg" class="muted"></p>
+      <footer class="dlg-foot">
+        <span class="grow"></span>
+        <button id="cf-cancel" class="btn" type="button">Annulla</button>
+        <button id="cf-ok" class="btn danger" type="submit">Conferma</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <div id="shield" class="shield" hidden>
+    <div class="shield-box">
+      <div class="logo" aria-hidden="true"></div>
+      <p><b>Contenuto nascosto</b></p>
+      <p class="muted small">Modalità riservata: torna su questa finestra per vederlo.</p>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

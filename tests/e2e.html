@@ -1,0 +1,310 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>CryptoPwd e2e</title>
+<style>iframe { width: 420px; height: 760px; border: 1px solid #ccc; } pre { font-size: 12px; }</style>
+<iframe id="f"></iframe>
+<pre id="out">running</pre>
+<script type="module">
+// Test end-to-end: l'app vera in un iframe, con Google/Drive simulati (fake-google.js).
+// Richiede un GOOGLE_CLIENT_ID qualsiasi (non segnaposto) in js/config.js durante il test.
+import * as C from '../js/crypto.js';
+
+const frame = document.getElementById('f');
+const results = [];
+const log = (s) => { results.push(s); document.getElementById('out').textContent = results.join('\n'); };
+const ok = (name, cond) => log(`${cond ? 'PASS' : 'FAIL'} ${name}`);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const d = () => frame.contentDocument;
+const $ = (id) => d().getElementById(id);
+const visible = (id) => $(id) && !$(id).hidden;
+
+async function waitFor(fn, what, ms = 20000) {
+  const t0 = Date.now();
+  for (;;) {
+    try { if (await fn()) return true; } catch { /* riprova */ }
+    if (Date.now() - t0 > ms) throw new Error(`timeout: ${what}`);
+    await sleep(100);
+  }
+}
+
+async function deleteDb() {
+  await new Promise((r) => { frame.onload = r; frame.srcdoc = '<p>blank</p>'; });
+  await new Promise((res, rej) => {
+    const q = indexedDB.deleteDatabase('cryptopwd');
+    q.onsuccess = res; q.onerror = rej; q.onblocked = () => setTimeout(res, 500);
+  });
+}
+
+async function loadApp() {
+  const html = await (await fetch('../index.html', { cache: 'no-store' })).text();
+  const inj = html
+    .replace('<head>', '<head><base href="/">')
+    .replace('<script type="module"', '<script src="tests/fake-google.js"><\/script><script type="module"');
+  await new Promise((r) => { frame.onload = r; frame.srcdoc = inj; });
+}
+
+function fill(id, v) { $(id).value = v; $(id).dispatchEvent(new Event('input', { bubbles: true })); }
+const titles = () => [...d().querySelectorAll('#list .item-title')].map((n) => n.textContent).sort();
+const driveBlob = () => { const f = Object.values(window.fakeDrive.files)[0]; return f && JSON.parse(f.content); };
+async function driveData(pwd) { return (await C.openWithPassword(pwd, driveBlob())).data; }
+const live = (data) => data.entries.filter((e) => !e.deleted).map((e) => e.title).sort();
+
+async function addEntry(title, pwd) {
+  $('btn-add').click();
+  fill('e-title', title); fill('e-user', title.toLowerCase() + '@x.it'); fill('e-pwd', pwd);
+  $('form-edit').requestSubmit();
+  await waitFor(() => titles().includes(title), `voce ${title} in elenco`);
+}
+
+const P1 = 'prima-password-123', P2 = 'seconda-password-456';
+
+try {
+  // 1. Dispositivo A: nuovo archivio con Drive
+  await deleteDb(); await loadApp();
+  await waitFor(() => visible('screen-setup'), 'schermata setup');
+  fill('create-pwd', P1); fill('create-pwd2', P1); $('create-drive').checked = true;
+  $('form-create').requestSubmit();
+  await waitFor(() => visible('screen-main'), 'schermata principale');
+  await waitFor(() => driveBlob(), 'file creato su Drive');
+  ok('1. archivio creato e caricato su Drive', !!driveBlob());
+
+  await addEntry('Gmail', 'g-secret');
+  await waitFor(async () => live(await driveData(P1)).includes('Gmail'), 'Gmail su Drive');
+  ok('1. nuova voce sincronizzata su Drive (cifrata)', !Object.values(window.fakeDrive.files)[0].content.includes('g-secret'));
+
+  // 2. Dispositivo B: ripristino da Drive
+  await deleteDb(); await loadApp();
+  await waitFor(() => visible('screen-setup'), 'setup su B');
+  $('btn-restore').click();
+  await waitFor(() => $('dlg-prompt').open, 'richiesta password');
+  fill('p-input', 'sbagliata'); $('form-prompt').requestSubmit();
+  await waitFor(() => !$('p-error').hidden, 'errore password');
+  ok('2. password errata rifiutata al ripristino', true);
+  fill('p-input', P1); $('form-prompt').requestSubmit();
+  await waitFor(() => visible('screen-main') && titles().includes('Gmail'), 'Gmail ripristinata');
+  ok('2. ripristino su nuovo dispositivo', true);
+
+  // 3. Modifica offline su B + modifica "da un altro dispositivo" su Drive -> unione
+  window.fakeDrive.failNetwork = true;
+  await addEntry('Banca', 'b-secret');
+  await waitFor(() => $('sync-dot').dataset.state === 'err' || $('sync-dot').dataset.state === 'warn', 'stato errore/attesa sync');
+  ok('3. senza rete la modifica resta locale', !live(await driveData(P1)).includes('Banca'));
+  {
+    const blob = driveBlob();
+    const o = await C.openWithPassword(P1, blob);
+    o.data.entries.push({ id: 'remote1', title: 'Remote', username: 'r', password: 'r-secret', updatedAt: Date.now(), createdAt: Date.now() });
+    const f = Object.values(window.fakeDrive.files)[0];
+    f.content = JSON.stringify(await C.seal(o.key, o.kdf, o.data));
+    f.modifiedTime = new Date(Date.now() + 1000).toISOString();
+  }
+  window.fakeDrive.failNetwork = false;
+  $('btn-sync').click();
+  await waitFor(() => titles().join() === 'Banca,Gmail,Remote', 'unione in locale');
+  await waitFor(async () => live(await driveData(P1)).join() === 'Banca,Gmail,Remote', 'unione su Drive');
+  ok('3. unione modifiche locali + remote', true);
+
+  // 3b. Modifica remota con dispositivo senza modifiche locali -> deve essere scaricata
+  {
+    const o = await C.openWithPassword(P1, driveBlob());
+    o.data.entries.push({ id: 'remote2', title: 'Remote2', password: 'x', updatedAt: Date.now(), createdAt: Date.now() });
+    const f = Object.values(window.fakeDrive.files)[0];
+    f.content = JSON.stringify(await C.seal(o.key, o.kdf, o.data));
+    f.modifiedTime = new Date(Date.now() + 2000).toISOString();
+  }
+  $('btn-sync').click();
+  await waitFor(() => titles().includes('Remote2'), 'Remote2 scaricata');
+  ok('3b. modifica remota scaricata', true);
+  // 3c. Nessuna modifica da nessuna parte -> solo una richiesta di metadati, nessun download
+  {
+    const before = window.fakeDrive.calls.length;
+    const lastSyncBefore = $('sync-label').textContent;
+    $('btn-sync').click();
+    await sleep(800);
+    const newCalls = window.fakeDrive.calls.slice(before);
+    ok(`3c. sync senza modifiche = 1 sola richiesta leggera (${newCalls.join(', ')})`, newCalls.length === 1 && lastSyncBefore);
+  }
+  // rimuove Remote2 per non alterare i conteggi successivi
+  d().querySelectorAll('#list .item-main').forEach((b) => { if (b.textContent.includes('Remote2')) b.click(); });
+  await waitFor(() => $('dlg-detail').open, 'dettaglio Remote2');
+  $('d-edit').click(); $('e-delete').click();
+  await waitFor(() => $('dlg-confirm').open, 'conferma');
+  $('form-confirm').requestSubmit();
+  await waitFor(() => titles().join() === 'Banca,Gmail,Remote', 'Remote2 eliminata');
+  await waitFor(async () => live(await driveData(P1)).join() === 'Banca,Gmail,Remote', 'Remote2 eliminata su Drive');
+
+  // 4. Cambio password principale
+  $('btn-settings').click(); $('s-change-pwd').click();
+  fill('c-old', P1); fill('c-new', P2); fill('c-new2', P2);
+  $('form-chpwd').requestSubmit();
+  await waitFor(async () => live(await driveData(P2)).length === 3, 'Drive con nuova password');
+  ok('4. cambio password propagato su Drive', true);
+  $('dlg-settings').close();
+
+  // 5. Blocco / sblocco
+  $('btn-lock').click();
+  await waitFor(() => visible('screen-lock'), 'schermata blocco');
+  ok('5. dati rimossi dal DOM al blocco', titles().length === 0);
+  fill('unlock-pwd', P1); $('form-unlock').requestSubmit();
+  await waitFor(() => !$('unlock-error').hidden, 'errore vecchia password');
+  fill('unlock-pwd', P2); $('form-unlock').requestSubmit();
+  await waitFor(() => visible('screen-main') && titles().length === 3, 'sblocco con nuova password');
+  ok('5. sblocco con nuova password', true);
+
+  // 6. Senza rete: si leggono le password dalla copia locale
+  window.fakeDrive.failNetwork = true;
+  await loadApp();
+  await waitFor(() => visible('screen-lock'), 'blocco dopo riavvio');
+  fill('unlock-pwd', P2); $('form-unlock').requestSubmit();
+  await waitFor(() => visible('screen-main') && titles().join() === 'Banca,Gmail,Remote', 'lettura offline');
+  ok('6. lettura offline dalla copia locale', true);
+  window.fakeDrive.failNetwork = false;
+
+  // 7. Dispositivo C con archivio locale separato (vecchia password) che poi collega Drive
+  await deleteDb(); await loadApp();
+  await waitFor(() => visible('screen-setup'), 'setup su C');
+  fill('create-pwd', P1); fill('create-pwd2', P1); $('create-drive').checked = false;
+  $('form-create').requestSubmit();
+  await waitFor(() => visible('screen-main'), 'main su C');
+  await addEntry('Solo locale', 'l-secret');
+  $('btn-settings').click(); $('s-drive-connect').click();
+  await waitFor(() => $('dlg-prompt').open, 'richiesta password del vault su Drive');
+  fill('p-input', P2); $('form-prompt').requestSubmit();
+  await waitFor(() => titles().length === 4, 'unione su C');
+  await waitFor(async () => live(await driveData(P2)).length === 4, 'Drive con 4 voci');
+  ok('7. unione tra archivi con password diverse (adotta la più recente)', true);
+  $('dlg-settings').close();
+  $('btn-lock').click();
+  fill('unlock-pwd', P2); $('form-unlock').requestSubmit();
+  await waitFor(() => visible('screen-main') && titles().length === 4, 'sblocco C con P2');
+  ok('7. il dispositivo C ora usa la password più recente', true);
+
+  // 8. Eliminazione propagata
+  d().querySelector('#list .item-main').click(); // prima voce in ordine alfabetico: Banca
+  await waitFor(() => $('dlg-detail').open, 'dettaglio');
+  $('d-edit').click();
+  $('e-delete').click();
+  await waitFor(() => $('dlg-confirm').open, 'conferma eliminazione');
+  $('form-confirm').requestSubmit();
+  await waitFor(() => !titles().includes('Banca'), 'Banca rimossa');
+  await waitFor(async () => !live(await driveData(P2)).includes('Banca'), 'Banca rimossa da Drive');
+  ok('8. eliminazione propagata su Drive', true);
+
+  // 9. Soggetti e categorie
+  const chipBtn = (rowId, label) => [...$(rowId).querySelectorAll('.fchip')].find((b) => b.textContent === label);
+  const promptText = async (v) => {
+    await waitFor(() => $('dlg-prompt').open, 'richiesta nome');
+    fill('p-input', v); $('form-prompt').requestSubmit();
+  };
+  chipBtn('subj-chips', '+ Soggetto').click();
+  await promptText('Mario');
+  await waitFor(() => chipBtn('subj-chips', 'Mario')?.classList.contains('active'), 'soggetto Mario selezionato');
+  chipBtn('cat-chips', '+ Categoria').click();
+  await promptText('Banca');
+  await waitFor(() => chipBtn('cat-chips', 'Banca')?.classList.contains('active'), 'categoria Banca selezionata');
+  chipBtn('cat-chips', '+ Categoria').click();
+  await promptText('banca');
+  await waitFor(() => !$('p-error').hidden, 'nome duplicato rifiutato');
+  ok('9. nome di categoria duplicato rifiutato', true);
+  fill('p-input', 'Email'); $('form-prompt').requestSubmit();
+  await waitFor(() => chipBtn('cat-chips', 'Email')?.classList.contains('active'), 'categoria Email');
+  chipBtn('cat-chips', 'Banca').click();
+  await addEntry('Conto Mario', 'cm-secret');
+  ok('9. nuova voce eredita soggetto e categoria dal filtro', titles().join() === 'Conto Mario');
+
+  // secondo soggetto con una categoria dallo stesso nome
+  chipBtn('subj-chips', '+ Soggetto').click();
+  await promptText('Ditta');
+  await waitFor(() => chipBtn('subj-chips', 'Ditta')?.classList.contains('active'), 'soggetto Ditta');
+  ok('9. il nuovo soggetto parte senza voci', titles().length === 0);
+  chipBtn('cat-chips', '+ Categoria').click();
+  await waitFor(() => $('dlg-prompt').open, 'prompt categoria');
+  ok('9. suggerisce le categorie degli altri soggetti', [...$('p-suggest').options].map((o) => o.value).join() === 'Banca,Email');
+  fill('p-input', 'Banca'); $('form-prompt').requestSubmit();
+  await waitFor(() => chipBtn('cat-chips', 'Banca')?.classList.contains('active'), 'Banca di Ditta');
+  await addEntry('Conto Ditta', 'cd-secret');
+
+  // spostamento di una voce senza soggetto dal modulo di modifica
+  chipBtn('subj-chips', 'Tutti').click();
+  await waitFor(() => d().querySelectorAll('#list .group').length >= 3, 'gruppi in "Tutti"');
+  const groups = [...d().querySelectorAll('#list .group')].map((g) => g.textContent);
+  ok(`9. "Tutti" raggruppa per soggetto › categoria (${groups.join(' / ')})`, groups[0] === 'Ditta › Banca' && groups[1] === 'Mario › Banca' && groups.at(-1) === 'Senza soggetto');
+  [...d().querySelectorAll('#list .item-main')].find((b) => b.textContent.includes('Gmail')).click();
+  await waitFor(() => $('dlg-detail').open, 'dettaglio Gmail');
+  $('d-edit').click();
+  const mid = [...$('e-subject').options].find((o) => o.textContent === 'Mario').value;
+  $('e-subject').value = mid; $('e-subject').dispatchEvent(new Event('change'));
+  await waitFor(() => !$('e-category').disabled, 'categorie di Mario');
+  $('e-category').value = [...$('e-category').options].find((o) => o.textContent === 'Email').value;
+  $('form-edit').requestSubmit();
+  chipBtn('subj-chips', 'Mario').click();
+  chipBtn('cat-chips', 'Email').click();
+  await waitFor(() => titles().join() === 'Gmail', 'Gmail in Mario › Email');
+  ok('9. voce spostata in Mario › Email', true);
+  await waitFor(() => $('toast').textContent === 'Salvato', 'salvataggio completato');
+
+  // eliminazione di un soggetto non vuoto rifiutata
+  $('btn-manage').click();
+  await waitFor(() => $('dlg-manage').open, 'gestione');
+  const row = [...$('m-tree').querySelectorAll('.tree-subject')].find((li) => li.querySelector('.tree-name').textContent === 'Mario');
+  row.querySelector('[title=Elimina]').click();
+  await waitFor(() => $('toast').textContent.includes('Impossibile'), 'avviso eliminazione', 3000).catch(() => {});
+  ok('9. soggetto con password non eliminabile', !$('dlg-confirm').open && !$('toast').hidden && $('toast').textContent.includes('Impossibile'));
+  // rinomina
+  row.querySelector('[title=Rinomina]').click();
+  await promptText('Mario Rossi');
+  await waitFor(() => chipBtn('subj-chips', 'Mario Rossi'), 'soggetto rinominato');
+  $('dlg-manage').close();
+
+  // sincronizzazione su un altro dispositivo
+  await waitFor(async () => { const dd = await driveData(P2); return dd.subjects.some((s) => s.name === 'Mario Rossi') && live(dd).includes('Conto Ditta'); }, 'soggetti su Drive');
+  await deleteDb(); await loadApp();
+  await waitFor(() => visible('screen-setup'), 'setup dispositivo D');
+  $('btn-restore').click();
+  await promptText(P2);
+  await waitFor(() => visible('screen-main') && chipBtn('subj-chips', 'Mario Rossi') && chipBtn('subj-chips', 'Ditta'), 'soggetti sul dispositivo D');
+  chipBtn('subj-chips', 'Mario Rossi').click();
+  await waitFor(() => chipBtn('cat-chips', 'Banca') && chipBtn('cat-chips', 'Email'), 'categorie su D');
+  ok('9. soggetti e categorie sincronizzati su un altro dispositivo', titles().join() === 'Conto Mario,Gmail');
+
+  // 10. Modalità riservata
+  const subs = () => [...d().querySelectorAll('#list .item-sub')].map((n) => n.textContent);
+  ok('10. utenti visibili senza modalità riservata', subs().includes('gmail@x.it'));
+  $('btn-privacy').click();
+  await waitFor(() => d().body.classList.contains('privacy') && subs().every((t) => t === '••••••••'), 'utenti coperti');
+  ok('10. utenti coperti nell\'elenco', true);
+  [...d().querySelectorAll('#list .item-main')].find((b) => b.textContent.includes('Gmail')).click();
+  await waitFor(() => $('dlg-detail').open, 'dettaglio');
+  ok('10. utente coperto nel dettaglio', $('d-user').textContent === '••••••••');
+  $('d-reveal').click();
+  ok('10. il click non rivela la password', $('d-pwd').textContent === '••••••••');
+  const PE = frame.contentWindow.PointerEvent;
+  $('d-reveal').dispatchEvent(new PE('pointerdown', { bubbles: true, cancelable: true }));
+  ok('10. tenendo premuto la password si vede', $('d-pwd').textContent === 'g-secret');
+  frame.contentWindow.dispatchEvent(new PE('pointerup'));
+  ok('10. rilasciando torna coperta', $('d-pwd').textContent === '••••••••');
+  $('d-user').dispatchEvent(new PE('pointerdown', { bubbles: true, cancelable: true }));
+  const userShown = $('d-user').textContent;
+  frame.contentWindow.dispatchEvent(new PE('pointerup'));
+  ok('10. tenendo premuto l\'utente si vede', userShown === 'gmail@x.it' && $('d-user').textContent === '••••••••');
+  d().querySelector('#dlg-detail [data-copy=password]').click();
+  await waitFor(() => $('dlg-confirm').open, 'avviso appunti');
+  ok('10. avviso prima di copiare', $('cf-msg').textContent.includes('desktop remoto'));
+  $('cf-cancel').click();
+  frame.contentWindow.dispatchEvent(new Event('blur'));
+  ok('10. finestra senza focus: contenuto nascosto', !$('shield').hidden && d().body.classList.contains('shielded'));
+  frame.contentWindow.dispatchEvent(new Event('focus'));
+  ok('10. focus ritrovato: contenuto visibile', $('shield').hidden);
+  const esc = () => d().dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  esc(); esc();
+  await waitFor(() => visible('screen-lock'), 'blocco con doppio Esc');
+  ok('10. doppio Esc blocca l\'app', $('d-pwd').textContent === '' && titles().length === 0);
+  fill('unlock-pwd', P2); $('form-unlock').requestSubmit();
+  await waitFor(() => visible('screen-main'), 'sblocco');
+  ok('10. la modalità riservata resta attiva dopo lo sblocco', d().body.classList.contains('privacy'));
+} catch (e) {
+  log('FAIL ' + e.message);
+  try { log('DEBUG sync=' + $('sync-label').textContent + ' / ' + $('btn-sync').title + ' calls=' + window.fakeDrive.calls.slice(-6).join(',') + ' dlg=' + [...d().querySelectorAll('dialog[open]')].map(x=>x.id) + ' cerr=' + $('c-error').textContent); } catch {}
+}
+log('chiamate Drive: ' + window.fakeDrive?.calls.length);
+console.log('E2ERESULT ' + results.join(' | '));
+</script>

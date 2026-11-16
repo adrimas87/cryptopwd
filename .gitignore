@@ -1,0 +1,8 @@
+# file locali
+*.bak
+.DS_Store
+Thumbs.db
+# esportazioni / import (potrebbero contenere password)
+*.csv
+cryptopwd-backup-*.json
+cryptopwd-vault.json

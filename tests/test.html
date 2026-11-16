@@ -1,0 +1,98 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>CryptoPwd test</title>
+<pre id="out">running</pre>
+<script type="module">
+import * as C from '../js/crypto.js';
+import * as V from '../js/vault.js';
+import { parseCsvEntries } from '../js/csv.js';
+
+const results = [];
+const ok = (name, cond) => results.push(`${cond ? 'PASS' : 'FAIL'} ${name}`);
+
+try {
+  // --- crypto ---
+  const kdf = C.newKdf();
+  const key = await C.deriveKey('correct horse battery', kdf);
+  const data = { entries: [{ id: 'a', title: 'Banca', password: 'p@ss€', updatedAt: 1 }] };
+  const blob = await C.seal(key, kdf, data);
+  ok('blob non contiene testo in chiaro', !JSON.stringify(blob).includes('Banca'));
+  const opened = await C.openWithPassword('correct horse battery', JSON.parse(JSON.stringify(blob)));
+  ok('roundtrip cifratura', opened.data.entries[0].password === 'p@ss€');
+  let wrong = null;
+  try { await C.openWithPassword('sbagliata', blob); } catch (e) { wrong = e; }
+  ok('password errata rilevata', wrong instanceof C.WrongPasswordError);
+  const tampered = { ...blob, data: blob.data.slice(0, -4) + 'AAAA' };
+  let tam = null;
+  try { await C.unseal(key, tampered); } catch (e) { tam = e; }
+  ok('manomissione rilevata', tam instanceof C.WrongPasswordError);
+  const blob2 = await C.seal(key, kdf, data);
+  ok('IV diverso a ogni salvataggio', blob2.iv !== blob.iv);
+  ok('sameKdf', C.sameKdf(kdf, blob.kdf) && !C.sameKdf(kdf, C.newKdf()));
+
+  // --- generatore ---
+  const g = C.generatePassword(24);
+  ok('generatore lunghezza', g.length === 24);
+  ok('generatore insiemi', /[a-z]/.test(g) && /[A-Z]/.test(g) && /[0-9]/.test(g) && /[^a-zA-Z0-9]/.test(g));
+  ok('generatore senza simboli', !/[^a-zA-Z0-9]/.test(C.generatePassword(30, { lower: true, upper: true, digits: true, symbols: false })));
+
+  // --- merge ---
+  const A = { entries: [
+    { id: '1', title: 'vecchio', updatedAt: 10 },
+    { id: '2', title: 'solo A', updatedAt: 5 },
+    { id: '3', title: 'da eliminare', updatedAt: 5 },
+  ], keyChangedAt: 0 };
+  const B = { entries: [
+    { id: '1', title: 'nuovo', updatedAt: 20 },
+    { id: '3', deleted: true, updatedAt: 9 },
+    { id: '4', title: 'solo B', updatedAt: 7 },
+  ], keyChangedAt: 99 };
+  const M = V.merge(A, B);
+  const byId = Object.fromEntries(M.entries.map((e) => [e.id, e]));
+  ok('merge: vince la modifica più recente', byId['1'].title === 'nuovo');
+  ok('merge: tiene voci di entrambi', byId['2'] && byId['4']);
+  ok('merge: propaga eliminazione', byId['3'].deleted === true);
+  ok('merge: simmetrico', V.fingerprint(M) === V.fingerprint(V.merge(B, A)));
+  ok('merge: keyChangedAt massimo', M.keyChangedAt === 99);
+  ok('liveEntries esclude eliminate', V.liveEntries(M).length === 3);
+
+  const D = V.emptyVault();
+  V.upsertEntry(D, { title: 'x', password: 'y' });
+  const id = D.entries[0].id;
+  const fp = V.fingerprint(D);
+  await new Promise((r) => setTimeout(r, 5));
+  V.upsertEntry(D, { id, title: 'x2' });
+  ok('upsert aggiorna e cambia fingerprint', D.entries[0].title === 'x2' && D.entries[0].password === 'y' && V.fingerprint(D) !== fp);
+  V.deleteEntry(D, id);
+  ok('delete crea tombstone senza dati', D.entries[0].deleted && !('password' in D.entries[0]));
+
+  // --- soggetti e categorie ---
+  const X = V.normalize({ entries: [{ id: 'e', title: 't', updatedAt: 1 }] });
+  ok('normalize su vault vecchio', Array.isArray(X.subjects) && Array.isArray(X.categories));
+  const sA = V.emptyVault(), sB = V.emptyVault();
+  const mario = V.upsertItem(sA, 'subjects', { name: 'Mario' });
+  V.upsertItem(sA, 'categories', { subjectId: mario.id, name: 'Banca' });
+  V.upsertItem(sA, 'categories', { subjectId: mario.id, name: 'Email' });
+  const ditta = V.upsertItem(sB, 'subjects', { name: 'Ditta' });
+  V.upsertItem(sB, 'categories', { subjectId: ditta.id, name: 'PEC' });
+  const SM = V.merge(sA, sB);
+  ok('merge soggetti da due dispositivi', V.subjectsOf(SM).map((s) => s.name).join() === 'Ditta,Mario');
+  ok('più categorie per soggetto', V.categoriesOf(SM, mario.id).map((c) => c.name).join() === 'Banca,Email' && V.categoriesOf(SM, ditta.id).length === 1);
+  V.upsertEntry(SM, { title: 'Conto', subjectId: mario.id, categoryId: V.categoriesOf(SM, mario.id)[0].id });
+  ok('usage conta voci e categorie', V.usage(SM, { subjectId: mario.id }).entries === 1 && V.usage(SM, { subjectId: mario.id }).categories === 2);
+  ok('fingerprint include soggetti', V.fingerprint(SM) !== V.fingerprint({ ...SM, subjects: [] }));
+
+  // --- CSV ---
+  const csv = '﻿name,url,username,password,note\r\nGmail,https://mail.google.com,me@x.it,"pa,ss""w",\r\n,https://www.example.com/login,u,p,"riga1\nriga2"\r\n';
+  const rows = parseCsvEntries(csv);
+  ok('csv: 2 righe', rows.length === 2);
+  ok('csv: virgolette e virgole', rows[0].password === 'pa,ss"w' && rows[0].username === 'me@x.it');
+  ok('csv: nome dal dominio + note multilinea', rows[1].title === 'example.com' && rows[1].notes === 'riga1\nriga2');
+  const bw = parseCsvEntries('folder,favorite,type,name,notes,fields,reprompt,login_uri,login_username,login_password,login_totp\n,,login,Banca,,,0,https://banca.it,mario,segreto,\n');
+  ok('csv: formato Bitwarden', bw[0].title === 'Banca' && bw[0].password === 'segreto' && bw[0].username === 'mario');
+} catch (e) {
+  results.push('FAIL eccezione: ' + e.stack);
+}
+document.getElementById('out').textContent = 'DONE\n' + results.join('\n');
+console.log('TESTRESULT ' + results.join(' | '));
+</script>
