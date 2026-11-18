@@ -1,7 +1,7 @@
 // Configurazione. Vedi README.md per come ottenere il Client ID.
 // Il Client ID NON è un segreto: identifica l'app presso Google, non dà accesso ai tuoi dati.
 
-export const GOOGLE_CLIENT_ID = 'INSERISCI_QUI_IL_TUO_CLIENT_ID.apps.googleusercontent.com';
+export const GOOGLE_CLIENT_ID = '995315982993-otsm2lv28if8ocp7pb05lj7d1maq944a.apps.googleusercontent.com';
 
 // Nome del file cifrato su Google Drive.
 export const DRIVE_FILE_NAME = 'cryptopwd-vault.json';
