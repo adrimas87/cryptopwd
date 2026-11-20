@@ -47,7 +47,8 @@ function fill(id, v) { $(id).value = v; $(id).dispatchEvent(new Event('input', {
 const titles = () => [...d().querySelectorAll('#list .item-title')].map((n) => n.textContent).sort();
 const driveBlob = () => { const f = Object.values(window.fakeDrive.files)[0]; return f && JSON.parse(f.content); };
 async function driveData(pwd) { return (await C.openWithPassword(pwd, driveBlob())).data; }
-const live = (data) => data.entries.filter((e) => !e.deleted).map((e) => e.title).sort();
+const live = (data) => data.entries.filter((e) => !e.deleted && !e.trashedAt).map((e) => e.title).sort();
+const trashed = (data) => data.entries.filter((e) => !e.deleted && e.trashedAt).map((e) => e.title).sort();
 
 async function addEntry(title, pwd) {
   $('btn-add').click();
@@ -56,6 +57,7 @@ async function addEntry(title, pwd) {
   await waitFor(() => titles().includes(title), `voce ${title} in elenco`);
 }
 
+const V_trashCount = () => Number($('trash-count').textContent);
 const P1 = 'prima-password-123', P2 = 'seconda-password-456';
 
 try {
@@ -301,6 +303,87 @@ try {
   fill('unlock-pwd', P2); $('form-unlock').requestSubmit();
   await waitFor(() => visible('screen-main'), 'sblocco');
   ok('10. la modalità riservata resta attiva dopo lo sblocco', d().body.classList.contains('privacy'));
+  $('btn-privacy').click();
+
+  // 11. Link pagina di login
+  $('btn-add').click();
+  fill('e-title', 'Con login'); fill('e-url', 'banca.example/login'); fill('e-pwd', 'x');
+  $('form-edit').requestSubmit();
+  await waitFor(() => titles().includes('Con login'), 'voce con link');
+  const li = [...d().querySelectorAll('#list .item')].find((n) => n.textContent.includes('Con login'));
+  const a = li.querySelector('a.icon-btn');
+  ok('11. pulsante "apri login" nell\'elenco', a && a.href === 'https://banca.example/login' && a.target === '_blank');
+  li.querySelector('.item-main').click();
+  await waitFor(() => $('dlg-detail').open, 'dettaglio con link');
+  ok('11. link nel dettaglio', !$('d-open').hidden && $('d-open').href === 'https://banca.example/login');
+  $('dlg-detail').close();
+  $('btn-add').click();
+  fill('e-title', 'Link pericoloso'); fill('e-url', 'javascript:alert(1)'); fill('e-pwd', 'x');
+  $('form-edit').requestSubmit();
+  await waitFor(() => titles().includes('Link pericoloso'), 'voce link pericoloso');
+  const li2 = [...d().querySelectorAll('#list .item')].find((n) => n.textContent.includes('Link pericoloso'));
+  ok('11. link "javascript:" non diventa cliccabile', !li2.querySelector('a.icon-btn'));
+
+  // 12. Copia utente dall'elenco e dal modulo
+  const copied = [];
+  frame.contentWindow.navigator.clipboard.writeText = async (t) => { copied.push(t); };
+  const gm = [...d().querySelectorAll('#list .item')].find((n) => n.textContent.includes('Gmail'));
+  gm.querySelector('[title="Copia utente"]').click();
+  await waitFor(() => copied.includes('gmail@x.it'), 'copia utente dall\'elenco');
+  ok('12. copia utente dall\'elenco', true);
+  gm.querySelector('[title="Copia password"]').click();
+  await waitFor(() => copied.includes('g-secret'), 'copia password dall\'elenco');
+  ok('12. copia password dall\'elenco', true);
+  gm.querySelector('.item-main').click();
+  await waitFor(() => $('dlg-detail').open, 'dettaglio Gmail');
+  $('d-edit').click();
+  $('e-copy-user').click();
+  $('e-copy-pwd').click();
+  await waitFor(() => copied.filter((t) => t === 'gmail@x.it').length === 2 && copied.filter((t) => t === 'g-secret').length === 2, 'copia dal modulo');
+  ok('12. copia utente e password dal modulo di modifica', true);
+
+  // 13. Cestino
+  const t0 = V_trashCount();
+  $('e-delete').click();
+  await waitFor(() => $('dlg-confirm').open, 'conferma cestino');
+  ok('13. l\'eliminazione chiede di spostare nel cestino', $('cf-title').textContent.includes('cestino'));
+  $('form-confirm').requestSubmit();
+  await waitFor(() => !titles().includes('Gmail') && !$('btn-trash').hidden && V_trashCount() === t0 + 1, 'Gmail nel cestino');
+  await waitFor(async () => trashed(await driveData(P2)).includes('Gmail'), 'cestino sincronizzato su Drive');
+  ok('13. voce nel cestino (anche su Drive), non più in elenco', true);
+  $('btn-trash').click();
+  await waitFor(() => $('dlg-trash').open && $('t-list').textContent.includes('Gmail'), 'cestino aperto');
+  [...$('t-list').querySelectorAll('button')].find((b) => b.textContent === 'Ripristina').click();
+  await waitFor(() => titles().includes('Gmail') && V_trashCount() === t0, 'Gmail ripristinata');
+  ok('13. ripristino dal cestino con tutti i dati', true);
+  {
+    const gm2 = [...d().querySelectorAll('#list .item')].find((n) => n.textContent.includes('Gmail'));
+    gm2.querySelector('[title="Copia password"]').click();
+    await waitFor(() => copied.filter((t) => t === 'g-secret').length === 3, 'password dopo ripristino');
+    ok('13. la password ripristinata è intatta', true);
+  }
+  $('dlg-trash').close();
+  // due voci nel cestino, poi svuota con conferma scritta
+  for (const name of ['Con login', 'Link pericoloso']) {
+    [...d().querySelectorAll('#list .item-main')].find((b) => b.textContent.includes(name)).click();
+    await waitFor(() => $('dlg-detail').open, 'dettaglio ' + name);
+    $('d-edit').click(); $('e-delete').click();
+    await waitFor(() => $('dlg-confirm').open, 'conferma');
+    $('form-confirm').requestSubmit();
+    await waitFor(() => !titles().includes(name), name + ' nel cestino');
+  }
+  ok('13. contatore cestino', V_trashCount() === t0 + 2);
+  $('btn-trash').click();
+  await waitFor(() => $('dlg-trash').open, 'cestino');
+  $('t-empty-btn').click();
+  await waitFor(() => $('dlg-prompt').open, 'conferma scritta');
+  fill('p-input', 'si'); $('form-prompt').requestSubmit();
+  await waitFor(() => !$('p-error').hidden, 'parola sbagliata rifiutata');
+  ok('13. svuota cestino: conferma sbagliata rifiutata', V_trashCount() === t0 + 2);
+  fill('p-input', 'svuota'); $('form-prompt').requestSubmit();
+  await waitFor(() => !$('dlg-prompt').open && $('btn-trash').hidden, 'cestino svuotato');
+  await waitFor(async () => { const dd = await driveData(P2); return trashed(dd).length === 0 && dd.entries.filter((e) => e.deleted).length >= 2; }, 'svuotamento su Drive');
+  ok('13. cestino svuotato definitivamente (anche su Drive)', true);
 } catch (e) {
   log('FAIL ' + e.message);
   try { log('DEBUG sync=' + $('sync-label').textContent + ' / ' + $('btn-sync').title + ' calls=' + window.fakeDrive.calls.slice(-6).join(',') + ' dlg=' + [...d().querySelectorAll('dialog[open]')].map(x=>x.id) + ' cerr=' + $('c-error').textContent); } catch {}

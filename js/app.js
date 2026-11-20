@@ -446,6 +446,7 @@ function lock() {
   $('subj-chips').replaceChildren();
   $('cat-chips').replaceChildren();
   $('m-tree').replaceChildren();
+  $('t-list').replaceChildren();
   $('form-edit').reset();
   for (const id of ['d-pwd', 'd-user', 'd-notes', 'd-title', 'd-path']) $(id).textContent = '';
   document.body.classList.remove('peek');
@@ -740,14 +741,26 @@ function renderList() {
         el('span', { class: 'item-text' },
           el('span', { class: 'item-title', textContent: e.title || '(senza nome)' }),
           el('span', { class: 'item-sub', textContent: e.username ? (isPrivate() ? MASK : e.username) : '' }))),
+      ...(safeUrl(e.url) ? [el('a', {
+        class: 'icon-btn', href: safeUrl(e.url), target: '_blank', rel: 'noopener noreferrer',
+        title: 'Apri link', ariaLabel: `Apri link di ${e.title}`, textContent: '↗',
+      })] : []),
+      ...(e.username ? [el('button', {
+        class: 'icon-btn', type: 'button', title: 'Copia utente', ariaLabel: `Copia utente di ${e.title}`, textContent: '👤',
+        onclick: () => copy(e.username, 'Utente'),
+      })] : []),
       el('button', {
-        class: 'icon-btn', type: 'button', title: 'Copia password', textContent: '⧉',
+        class: 'icon-btn', type: 'button', title: 'Copia password', ariaLabel: `Copia password di ${e.title}`, textContent: '🔑',
         onclick: () => copy(e.password, 'Password'),
       })));
   }
   $('list').replaceChildren(...nodes);
 
   const total = V.liveEntries(S.data).length;
+  const trashed = V.trashedEntries(S.data).length;
+  $('trash-count').textContent = String(trashed);
+  $('btn-trash').hidden = trashed === 0;
+  if ($('dlg-trash').open) renderTrash();
   $('empty').hidden = items.length > 0;
   $('empty').textContent = !total
     ? 'Nessuna password salvata. Tocca + per aggiungerne una.'
@@ -761,7 +774,7 @@ $('search').addEventListener('input', renderList);
 let currentId = null;
 
 function findEntry(id) {
-  return S.data.entries.find((e) => e.id === id && !e.deleted);
+  return S.data.entries.find((e) => e.id === id && !e.deleted && !e.trashedAt);
 }
 
 function openDetail(id) {
@@ -776,7 +789,8 @@ function openDetail(id) {
   $('d-pwd-row').hidden = !e.password;
   const url = safeUrl(e.url);
   $('d-url').textContent = e.url || '';
-  if (url) $('d-url').href = url; else $('d-url').removeAttribute('href');
+  if (url) { $('d-url').href = url; $('d-open').href = url; } else { $('d-url').removeAttribute('href'); $('d-open').removeAttribute('href'); }
+  $('d-open').hidden = !url;
   $('d-url-row').hidden = !e.url;
   $('d-notes-row').hidden = !e.notes;
   $('d-updated').textContent = `Modificato: ${fmtDate(e.updatedAt)}`;
@@ -832,7 +846,7 @@ $('dlg-detail').addEventListener('click', (ev) => {
   if (!b) return;
   const e = findEntry(currentId);
   const f = b.dataset.copy;
-  copy(e[f], { username: 'Utente', password: 'Password', url: 'Sito' }[f]);
+  copy(e[f], { username: 'Utente', password: 'Password', url: 'Link' }[f]);
 });
 $('dlg-detail').addEventListener('close', () => { $('d-pwd').textContent = MASK; $('d-pwd').dataset.shown = ''; });
 $('d-edit').addEventListener('click', () => { $('dlg-detail').close(); openEdit(currentId); });
@@ -960,14 +974,73 @@ $('form-edit').addEventListener('submit', async (ev) => {
 
 $('e-delete').addEventListener('click', async () => {
   const e = findEntry(currentId);
-  if (!e || !(await confirmBox('Eliminare la voce?', `"${e.title}" verrà eliminata da tutti i dispositivi.`, 'Elimina'))) return;
-  V.deleteEntry(S.data, currentId);
+  if (!e || !(await confirmBox('Spostare nel cestino?', `"${e.title}" verrà spostata nel cestino su tutti i dispositivi. Potrai ripristinarla dal cestino.`, 'Sposta nel cestino'))) return;
+  V.trashEntry(S.data, currentId);
   await persistLocal();
   $('dlg-edit').close();
   renderList();
   scheduleSync();
-  toast('Eliminata');
+  toast('Spostata nel cestino');
 });
+
+$('e-copy-user').addEventListener('click', () => copy($('e-user').value, 'Utente'));
+$('e-copy-pwd').addEventListener('click', () => copy($('e-pwd').value, 'Password'));
+
+// =====================================================================
+// Cestino
+// =====================================================================
+function openTrash() {
+  renderTrash();
+  openDialog($('dlg-trash'));
+}
+function renderTrash() {
+  const items = V.trashedEntries(S.data);
+  $('t-empty').hidden = items.length > 0;
+  $('t-empty-btn').disabled = items.length === 0;
+  $('t-list').replaceChildren(...items.map((e) => el('li', { class: 'tree-subject' },
+    el('div', { class: 'tree-row' },
+      el('span', { class: 'tree-name' },
+        el('span', { class: 'strong', textContent: e.title || '(senza nome)' }),
+        el('br'),
+        el('span', { class: 'muted small', textContent: [pathText(e), `eliminata il ${fmtDate(e.trashedAt)}`].filter(Boolean).join(' · ') })),
+      el('button', { class: 'btn small-btn', type: 'button', textContent: 'Ripristina', onclick: () => restoreFromTrash(e.id) }),
+      el('button', { class: 'icon-btn', type: 'button', title: 'Elimina definitivamente', ariaLabel: `Elimina definitivamente ${e.title}`, textContent: '✕', onclick: () => deleteForever(e) })))));
+}
+async function restoreFromTrash(id) {
+  V.restoreEntry(S.data, id);
+  await persistLocal();
+  renderList();
+  scheduleSync();
+  toast('Password ripristinata');
+}
+async function deleteForever(e) {
+  if (!(await confirmBox('Eliminare definitivamente?', `"${e.title}" verrà eliminata per sempre da tutti i dispositivi. Non si potrà recuperare.`, 'Elimina per sempre'))) return;
+  V.deleteEntry(S.data, e.id);
+  await persistLocal();
+  renderList();
+  scheduleSync();
+  toast('Eliminata definitivamente');
+}
+const EMPTY_WORD = 'SVUOTA';
+$('t-empty-btn').addEventListener('click', async () => {
+  const n = V.trashedEntries(S.data).length;
+  if (!n) return;
+  const ok = await askInput({
+    title: 'Svuotare il cestino?',
+    msg: `${n === 1 ? 'La password nel cestino verrà eliminata' : `Le ${n} password nel cestino verranno eliminate`} per sempre da tutti i dispositivi e non si potranno più recuperare. Per confermare scrivi ${EMPTY_WORD}.`,
+    type: 'text',
+    placeholder: EMPTY_WORD,
+    validate: async (v) => (v.trim().toUpperCase() === EMPTY_WORD ? null : `Scrivi ${EMPTY_WORD} per confermare`),
+  });
+  if (ok === null) return;
+  const removed = V.emptyTrash(S.data);
+  await persistLocal();
+  renderList();
+  scheduleSync();
+  toast(`Cestino svuotato: ${removed} password eliminate definitivamente`);
+});
+$('btn-trash').addEventListener('click', openTrash);
+$('s-trash').addEventListener('click', () => { $('dlg-settings').close(); openTrash(); });
 
 // =====================================================================
 // Impostazioni

@@ -84,6 +84,7 @@
     </nav>
     <ul id="list" class="list"></ul>
     <p id="empty" class="muted center-text" hidden>Nessuna password salvata. Tocca <b>+</b> per aggiungerne una.</p>
+    <div class="trash-wrap"><button id="btn-trash" class="link-btn" type="button" hidden>🗑 Cestino (<span id="trash-count">0</span>)</button></div>
     <button id="btn-add" class="fab" type="button" aria-label="Aggiungi">+</button>
   </section>
 
@@ -108,9 +109,10 @@
           <button class="icon-btn" data-copy="password" type="button" aria-label="Copia password">⧉</button>
         </div>
         <div class="field" id="d-url-row">
-          <span class="lbl">Sito</span>
+          <span class="lbl">Link</span>
           <a id="d-url" class="val" target="_blank" rel="noopener noreferrer"></a>
-          <button class="icon-btn" data-copy="url" type="button" aria-label="Copia sito">⧉</button>
+          <a id="d-open" class="icon-btn" target="_blank" rel="noopener noreferrer" aria-label="Apri link" title="Apri link">↗</a>
+          <button class="icon-btn" data-copy="url" type="button" aria-label="Copia link">⧉</button>
         </div>
         <div class="field col" id="d-notes-row">
           <span class="lbl">Note</span>
@@ -137,19 +139,25 @@
           <label>Categoria <select id="e-category"></select></label>
         </div>
         <label>Nome <input id="e-title" required maxlength="200" placeholder="es. Banca, Gmail…"></label>
-        <label>Utente / email <input id="e-user" maxlength="500" autocapitalize="off" spellcheck="false"></label>
+        <label>Link <input id="e-url" type="text" inputmode="url" maxlength="2000" autocapitalize="off" spellcheck="false" placeholder="https://…"></label>
+        <label>Utente / email
+          <span class="input-row">
+            <input id="e-user" maxlength="500" autocapitalize="off" spellcheck="false">
+            <button id="e-copy-user" class="icon-btn" type="button" aria-label="Copia utente" title="Copia utente">⧉</button>
+          </span>
+        </label>
         <label>Password
           <span class="input-row">
             <input id="e-pwd" type="password" maxlength="1000" autocapitalize="off" spellcheck="false" autocomplete="off">
             <button id="e-reveal" class="icon-btn" type="button" aria-label="Mostra">👁</button>
-            <button id="e-gen" class="icon-btn" type="button" aria-label="Genera">🎲</button>
+            <button id="e-gen" class="icon-btn" type="button" aria-label="Genera" title="Genera password">🎲</button>
+            <button id="e-copy-pwd" class="icon-btn" type="button" aria-label="Copia password" title="Copia password">⧉</button>
           </span>
         </label>
         <div class="gen-opts">
           <label class="inline">Lunghezza <input id="g-len" type="number" min="8" max="64" value="20"></label>
           <label class="check"><input id="g-sym" type="checkbox" checked> Simboli</label>
         </div>
-        <label>Sito web <input id="e-url" type="text" inputmode="url" maxlength="2000" autocapitalize="off" spellcheck="false" placeholder="https://…"></label>
         <label>Note <textarea id="e-notes" rows="4" maxlength="10000"></textarea></label>
       </div>
       <footer class="dlg-foot">
@@ -178,7 +186,10 @@
         </div>
 
         <h3>Organizzazione</h3>
-        <button id="s-manage" class="btn" type="button">Gestisci soggetti e categorie</button>
+        <div class="row wrap">
+          <button id="s-manage" class="btn" type="button">Gestisci soggetti e categorie</button>
+          <button id="s-trash" class="btn" type="button">🗑 Cestino</button>
+        </div>
 
         <h3>Sicurezza</h3>
         <label class="check"><input id="s-privacy" type="checkbox"> Modalità riservata (anche dal pulsante 🛡)</label>
@@ -243,6 +254,23 @@
       <p id="m-empty" class="muted small" hidden>Nessun soggetto. Creane uno per iniziare.</p>
       <footer class="dlg-foot">
         <button id="m-add-subject" class="btn primary" type="button">+ Nuovo soggetto</button>
+      </footer>
+    </div>
+  </dialog>
+
+  <!-- CESTINO -->
+  <dialog id="dlg-trash">
+    <div class="dlg">
+      <header class="dlg-head">
+        <h2>🗑 Cestino</h2>
+        <button class="icon-btn" data-close type="button" aria-label="Chiudi">✕</button>
+      </header>
+      <p class="muted small">Le password eliminate restano qui finché non le ripristini o svuoti il cestino.</p>
+      <ul id="t-list" class="tree"></ul>
+      <p id="t-empty" class="muted small" hidden>Il cestino è vuoto.</p>
+      <footer class="dlg-foot">
+        <span class="grow"></span>
+        <button id="t-empty-btn" class="btn danger" type="button">Svuota cestino</button>
       </footer>
     </div>
   </dialog>

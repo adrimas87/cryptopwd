@@ -245,3 +245,9 @@ body.shielded .screen, body.shielded dialog { visibility: hidden; }
 }
 .shield-box p { margin: 6px 0; }
 body.shielded dialog::backdrop { visibility: hidden; }
+a.icon-btn { display: inline-grid; place-items: center; text-decoration: none; color: var(--primary); font-weight: 700; }
+
+/* Cestino */
+.trash-wrap { max-width: 760px; margin: 0 auto; padding: 0 12px 96px; text-align: center; }
+.list { padding-bottom: 8px; }
+.small-btn { padding: 7px 10px; font-size: .85rem; }

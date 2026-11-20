@@ -29,7 +29,10 @@ export function newId() {
 const alive = (arr) => arr.filter((x) => !x.deleted);
 const byName = (a, b) => (a.name || '').localeCompare(b.name || '', 'it', { sensitivity: 'base' });
 
-export const liveEntries = (data) => alive(data.entries);
+// voci attive (escluse quelle nel cestino)
+export const liveEntries = (data) => alive(data.entries).filter((e) => !e.trashedAt);
+// voci nel cestino, dalla più recente
+export const trashedEntries = (data) => alive(data.entries).filter((e) => e.trashedAt).sort((a, b) => b.trashedAt - a.trashedAt);
 export const subjectsOf = (data) => alive(data.subjects).sort(byName);
 export const categoriesOf = (data, subjectId) => alive(data.categories).filter((c) => c.subjectId === subjectId).sort(byName);
 export const findLive = (data, coll, id) => (id ? data[coll].find((x) => x.id === id && !x.deleted) : undefined);
@@ -52,7 +55,25 @@ export function deleteItem(data, coll, id) {
 }
 
 export const upsertEntry = (data, entry) => upsertItem(data, 'entries', entry);
+
+// Cestino: la voce conserva tutti i dati e si può ripristinare.
+export function trashEntry(data, id) {
+  const e = data.entries.find((x) => x.id === id && !x.deleted);
+  if (e) upsertItem(data, 'entries', { id, trashedAt: Date.now() });
+}
+export function restoreEntry(data, id) {
+  const i = data.entries.findIndex((x) => x.id === id && !x.deleted);
+  if (i < 0) return;
+  const { trashedAt, ...rest } = data.entries[i];
+  data.entries[i] = { ...rest, updatedAt: Date.now() };
+}
+// Eliminazione definitiva (dal cestino): resta solo il "tombstone".
 export const deleteEntry = (data, id) => deleteItem(data, 'entries', id);
+export function emptyTrash(data) {
+  const ids = trashedEntries(data).map((e) => e.id);
+  for (const id of ids) deleteItem(data, 'entries', id);
+  return ids.length;
+}
 
 // Quante voci/categorie vive dipendono da un soggetto o da una categoria.
 export function usage(data, { subjectId, categoryId }) {
