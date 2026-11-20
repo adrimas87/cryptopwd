@@ -20,6 +20,8 @@ Gestore di password personale, utilizzabile da qualsiasi dispositivo (telefono, 
 
 - **Soggetti e categorie**: ogni password appartiene a un *soggetto* (te, un familiare, la tua azienda…) e a una delle sue *categorie* (Banca, Email, PEC…). Ogni soggetto ha le proprie categorie. Si filtra con i chip in alto e si gestiscono con ✎ (rinomina ed elimina; un soggetto o una categoria che contiene ancora password non si può eliminare).
 - **Modalità riservata** (pulsante 🛡), per quando qualcuno potrebbe vedere lo schermo (es. desktop remoto collegato): utenti, password e note coperti e visibili solo tenendo premuto, contenuto nascosto quando la finestra perde il focus, avviso prima di copiare (gli strumenti di desktop remoto possono trasmettere gli appunti). **Doppio Esc** blocca subito l'app. Non impedisce la cattura dello schermo: riduce ciò che si vede.
+- **Allegati**: a ogni password puoi allegare file (max 10 MB ciascuno). Sono cifrati con una chiave propria, salvati su Drive come file separati (`cryptopwd-att-….bin`) e disponibili anche offline.
+- **Cestino**: le password eliminate si possono ripristinare; "Svuota cestino" richiede di scrivere SVUOTA.
 - Elenco con ricerca, copia rapida della password (gli appunti si svuotano dopo 30 secondi)
 - Generatore di password robuste
 - Blocco automatico dopo un periodo di inattività configurabile

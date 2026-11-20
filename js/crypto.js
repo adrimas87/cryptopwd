@@ -80,6 +80,41 @@ export async function openWithPassword(password, blob) {
   return { key, kdf: blob.kdf, data };
 }
 
+// ---- Allegati ----
+// Ogni allegato ha una propria chiave AES-256 casuale, salvata (in base64) dentro la voce
+// del vault, che è a sua volta cifrato. Così cambiare la password principale non richiede
+// di ricifrare gli allegati. Formato del file cifrato: IV (12 byte) || ciphertext.
+const ATT_AAD = enc.encode('cryptopwd-attachment-v1');
+
+export async function newAttachmentKey() {
+  const k = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+  return toB64(await crypto.subtle.exportKey('raw', k));
+}
+
+async function importAttKey(keyB64) {
+  return crypto.subtle.importKey('raw', fromB64(keyB64), { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+}
+
+export async function encryptBytes(keyB64, bytes) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: ATT_AAD }, await importAttKey(keyB64), bytes));
+  const out = new Uint8Array(12 + ct.length);
+  out.set(iv, 0);
+  out.set(ct, 12);
+  return out;
+}
+
+export async function decryptBytes(keyB64, data) {
+  const u8 = data instanceof Uint8Array ? data : new Uint8Array(data);
+  try {
+    return new Uint8Array(await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: u8.subarray(0, 12), additionalData: ATT_AAD }, await importAttKey(keyB64), u8.subarray(12)
+    ));
+  } catch {
+    throw new Error('Allegato danneggiato o non decifrabile');
+  }
+}
+
 // Generatore di password con campionamento a rifiuto (nessun bias).
 export function generatePassword(length = 20, opts = { lower: true, upper: true, digits: true, symbols: true }) {
   const sets = [];

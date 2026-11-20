@@ -34,9 +34,23 @@
 
     let m;
     if (method === 'GET' && url.pathname === '/drive/v3/files') {
-      const name = /name='([^']+)'/.exec(url.searchParams.get('q'))[1];
-      const files = Object.values(FD.files).filter((f) => f.name === name && !f.trashed).map((f) => ({ id: f.id, modifiedTime: f.modifiedTime }));
+      const q = url.searchParams.get('q');
+      const eq = /name='([^']+)'/.exec(q);
+      const contains = /name contains '([^']+)'/.exec(q);
+      const files = Object.values(FD.files)
+        .filter((f) => !f.trashed && (eq ? f.name === eq[1] : f.name.includes(contains[1])))
+        .map((f) => ({ id: f.id, name: f.name, modifiedTime: f.modifiedTime }));
       return json({ files });
+    }
+    if (method === 'POST' && url.pathname === '/drive/v3/files') {
+      const meta = JSON.parse(opts.body);
+      const id = 'file' + ++FD.seq;
+      FD.files[id] = { id, name: meta.name, content: new Uint8Array(0), modifiedTime: new Date().toISOString() };
+      return json({ id });
+    }
+    if (method === 'DELETE' && (m = /^\/drive\/v3\/files\/([^/]+)$/.exec(url.pathname))) {
+      delete FD.files[m[1]];
+      return new Response(null, { status: 204 });
     }
     if (method === 'GET' && (m = /^\/drive\/v3\/files\/([^/]+)$/.exec(url.pathname))) {
       const f = FD.files[m[1]];

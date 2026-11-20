@@ -239,7 +239,7 @@ async function doSync({ password, force = false, interactive = false } = {}) {
 
     // Niente da fare se il file su Drive non è cambiato dall'ultima sincronizzazione
     // e qui non ci sono modifiche: basta una sola richiesta leggera (metadati).
-    if (file && !force && !S.meta.dirty && file.modifiedTime && file.modifiedTime === S.meta.remoteModified) {
+    if (file && !force && !S.meta.dirty && !S.meta.attPending && !(S.meta.attDelete || []).length && file.modifiedTime && file.modifiedTime === S.meta.remoteModified) {
       S.meta = await store.patchMeta({ fileId: file.id, lastSync: Date.now() });
       return setSync('ok');
     }
@@ -292,6 +292,11 @@ async function doSync({ password, force = false, interactive = false } = {}) {
     S.data = merged;
     if (localChanged) { await persistLocal({ dirty: false }); renderList(); }
 
+    // Allegati: si caricano PRIMA del vault, così gli altri dispositivi li trovano già su Drive.
+    S.meta = await store.patchMeta({ attPending: true });
+    const driveAtts = await drive.listAttachments();
+    await uploadMissingAttachments(driveAtts);
+
     let fileId = file?.id;
     let remoteModified = file?.modifiedTime;
     if (remoteChanged) {
@@ -301,12 +306,117 @@ async function doSync({ password, force = false, interactive = false } = {}) {
       remoteModified = f.modifiedTime;
     }
     S.meta = await store.patchMeta({ fileId, remoteModified, lastSync: Date.now(), dirty: false });
+
+    await downloadMissingAttachments(driveAtts);
+    await deleteQueuedAttachments(driveAtts);
+    await gcAttachments(driveAtts);
+    S.meta = await store.patchMeta({ attPending: false });
     setSync('ok');
   } catch (e) {
     if (e instanceof drive.AuthRequiredError) setSync('auth', e.message);
     else if (!navigator.onLine) setSync('offline');
     else setSync('error', e.message);
   }
+}
+
+// =====================================================================
+// Allegati: sincronizzazione e pulizia
+// =====================================================================
+const MAX_ATT_BYTES = 10 * 1024 * 1024;
+const ATT_GRACE_MS = 60 * 60 * 1000; // file "orfani" rimossi solo dopo 1 ora (evita conflitti tra dispositivi)
+let editAttachments = []; // allegati nel modulo di modifica (non ancora salvati)
+
+const attIdOf = (f) => f.name.slice(drive.ATT_PREFIX.length).replace(/\.bin$/, '');
+
+async function uploadMissingAttachments(driveAtts) {
+  const onDrive = new Set(driveAtts.map(attIdOf));
+  for (const id of V.referencedAttachments(S.data).keys()) {
+    if (onDrive.has(id)) continue;
+    const local = await store.getAtt(id);
+    if (!local) continue;
+    const fid = await drive.uploadAttachment(id, local.data);
+    driveAtts.push({ id: fid, name: `${drive.ATT_PREFIX}${id}.bin`, modifiedTime: new Date().toISOString() });
+  }
+}
+
+async function downloadMissingAttachments(driveAtts) {
+  const byId = new Map(driveAtts.map((f) => [attIdOf(f), f]));
+  for (const id of V.referencedAttachments(S.data).keys()) {
+    if (await store.getAtt(id)) continue;
+    const f = byId.get(id);
+    if (f) await store.putAtt(id, await drive.downloadBinary(f.id));
+  }
+}
+
+// Allegati rimossi esplicitamente (rimozione dalla voce, eliminazione definitiva, svuota cestino).
+async function queueAttDelete(ids) {
+  if (!ids.length) return;
+  for (const id of ids) await store.delAtt(id);
+  if (S.meta.driveLinked) S.meta = await store.patchMeta({ attDelete: [...new Set([...(S.meta.attDelete || []), ...ids])] });
+}
+
+async function deleteQueuedAttachments(driveAtts) {
+  const queue = new Set(S.meta.attDelete || []);
+  if (!queue.size) return;
+  const used = V.referencedAttachments(S.data);
+  for (const f of driveAtts) {
+    const id = attIdOf(f);
+    if (queue.has(id) && !used.has(id)) await drive.deleteFile(f.id);
+  }
+  S.meta = await store.patchMeta({ attDelete: [] });
+}
+
+async function gcAttachments(driveAtts) {
+  const used = V.referencedAttachments(S.data);
+  const pending = new Set(editAttachments.map((a) => a.id));
+  const now = Date.now();
+  for (const f of driveAtts) {
+    const id = attIdOf(f);
+    if (!used.has(id) && !pending.has(id) && now - Date.parse(f.modifiedTime) > ATT_GRACE_MS) await drive.deleteFile(f.id);
+  }
+  for (const id of await store.attIds()) {
+    if (used.has(id) || pending.has(id)) continue;
+    const rec = await store.getAtt(id);
+    if (now - (rec?.addedAt || 0) > ATT_GRACE_MS) await store.delAtt(id);
+  }
+}
+
+function fmtSize(n) {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
+async function attachmentBlob(a) {
+  const rec = await store.getAtt(a.id);
+  if (!rec) throw new Error('Allegato non ancora scaricato su questo dispositivo: collegati a internet e sincronizza.');
+  return new Blob([await C.decryptBytes(a.key, rec.data)], { type: a.type || 'application/octet-stream' });
+}
+
+async function openAttachment(a, mode) {
+  // la finestra va aperta subito, dentro il clic, altrimenti il browser la blocca
+  const win = mode === 'open' ? window.open('', '_blank') : null;
+  try {
+    const url = URL.createObjectURL(await attachmentBlob(a));
+    if (win) win.location.href = url;
+    else {
+      const link = el('a', { href: url, download: a.name || 'allegato' });
+      document.body.append(link);
+      link.click();
+      link.remove();
+    }
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  } catch (err) {
+    win?.close();
+    toast(err.message, 4000);
+  }
+}
+
+function attRow(a, actions) {
+  return el('li', { class: 'att' },
+    el('span', { class: 'att-name', textContent: `📄 ${a.name}` }),
+    el('span', { class: 'muted small', textContent: fmtSize(a.size || 0) }),
+    ...actions);
 }
 
 let syncDebounce;
@@ -390,9 +500,11 @@ $('btn-restore').addEventListener('click', async () => {
     if (pw === null) return;
     Object.assign(S, { key: opened.key, kdf: opened.kdf, data: V.normalize(opened.data) });
     await store.set('vault', blob);
-    S.meta = await store.patchMeta({ driveLinked: true, fileId: file.id, remoteModified: file.modifiedTime, lastSync: Date.now(), dirty: false });
+    // attPending: la prima sincronizzazione deve scaricare anche gli allegati
+    S.meta = await store.patchMeta({ driveLinked: true, fileId: file.id, remoteModified: file.modifiedTime, lastSync: Date.now(), dirty: false, attPending: true });
     enterMain();
     toast('Vault ripristinato');
+    sync();
   } catch (e) {
     toast(e.message, 4000);
   }
@@ -447,6 +559,9 @@ function lock() {
   $('cat-chips').replaceChildren();
   $('m-tree').replaceChildren();
   $('t-list').replaceChildren();
+  $('d-att-list').replaceChildren();
+  $('e-att-list').replaceChildren();
+  editAttachments = [];
   $('form-edit').reset();
   for (const id of ['d-pwd', 'd-user', 'd-notes', 'd-title', 'd-path']) $(id).textContent = '';
   document.body.classList.remove('peek');
@@ -739,7 +854,7 @@ function renderList() {
       el('button', { class: 'item-main', type: 'button', onclick: () => openDetail(e.id) },
         el('span', { class: 'avatar', textContent: (e.title || '?').trim().charAt(0).toUpperCase() }),
         el('span', { class: 'item-text' },
-          el('span', { class: 'item-title', textContent: e.title || '(senza nome)' }),
+          el('span', { class: 'item-title', textContent: (e.title || '(senza nome)') + ((e.attachments || []).length ? ' 📎' : '') }),
           el('span', { class: 'item-sub', textContent: e.username ? (isPrivate() ? MASK : e.username) : '' }))),
       ...(safeUrl(e.url) ? [el('a', {
         class: 'icon-btn', href: safeUrl(e.url), target: '_blank', rel: 'noopener noreferrer',
@@ -793,6 +908,12 @@ function openDetail(id) {
   $('d-open').hidden = !url;
   $('d-url-row').hidden = !e.url;
   $('d-notes-row').hidden = !e.notes;
+  const atts = e.attachments || [];
+  $('d-att-row').hidden = !atts.length;
+  $('d-att-list').replaceChildren(...atts.map((a) => attRow(a, [
+    el('button', { class: 'btn small-btn', type: 'button', textContent: 'Apri', onclick: () => openAttachment(a, 'open') }),
+    el('button', { class: 'icon-btn', type: 'button', title: 'Scarica', ariaLabel: `Scarica ${a.name}`, textContent: '⬇', onclick: () => openAttachment(a, 'download') }),
+  ])));
   $('d-updated').textContent = `Modificato: ${fmtDate(e.updatedAt)}`;
   maskDetail();
   openDialog($('dlg-detail'));
@@ -921,11 +1042,38 @@ function openEdit(id) {
   $('e-url').value = e?.url || '';
   $('e-notes').value = e?.notes || '';
   $('e-delete').hidden = !e;
+  editAttachments = [...(e?.attachments || [])];
+  renderEditAttachments();
   openDialog($('dlg-edit'));
   $('e-title').focus();
 }
 
 $('btn-add').addEventListener('click', () => openEdit(null));
+
+function renderEditAttachments() {
+  $('e-att-list').replaceChildren(...editAttachments.map((a) => attRow(a, [
+    el('button', { class: 'icon-btn', type: 'button', title: 'Rimuovi allegato', ariaLabel: `Rimuovi ${a.name}`, textContent: '✕',
+      onclick: () => { editAttachments = editAttachments.filter((x) => x.id !== a.id); renderEditAttachments(); } }),
+  ])));
+}
+$('e-attach').addEventListener('click', () => $('e-att-file').click());
+$('e-att-file').addEventListener('change', async (ev) => {
+  const files = [...ev.target.files];
+  ev.target.value = '';
+  for (const f of files) {
+    if (f.size > MAX_ATT_BYTES) { toast(`"${f.name}" supera 10 MB`, 3500); continue; }
+    try {
+      const key = await C.newAttachmentKey();
+      const data = await C.encryptBytes(key, new Uint8Array(await f.arrayBuffer()));
+      const id = V.newId();
+      await store.putAtt(id, data);
+      editAttachments.push({ id, name: f.name, type: f.type || 'application/octet-stream', size: f.size, key, addedAt: Date.now() });
+      renderEditAttachments();
+    } catch (err) {
+      toast(`Impossibile allegare "${f.name}": ${err.message}`, 4000);
+    }
+  }
+});
 $('e-reveal').addEventListener('click', () => {
   if (isPrivate()) return toastOnce('Tieni premuto per vedere');
   $('e-pwd').type = $('e-pwd').type === 'password' ? 'text' : 'password';
@@ -962,9 +1110,13 @@ $('form-edit').addEventListener('submit', async (ev) => {
     password: $('e-pwd').value,
     url: $('e-url').value.trim(),
     notes: $('e-notes').value,
+    attachments: editAttachments,
   };
+  const before = currentId ? findEntry(currentId)?.attachments || [] : [];
   if (currentId) entry.id = currentId;
   V.upsertEntry(S.data, entry);
+  await queueAttDelete(before.filter((a) => !editAttachments.some((b) => b.id === a.id)).map((a) => a.id));
+  editAttachments = [];
   await persistLocal();
   $('dlg-edit').close();
   renderList();
@@ -1016,6 +1168,7 @@ async function restoreFromTrash(id) {
 async function deleteForever(e) {
   if (!(await confirmBox('Eliminare definitivamente?', `"${e.title}" verrà eliminata per sempre da tutti i dispositivi. Non si potrà recuperare.`, 'Elimina per sempre'))) return;
   V.deleteEntry(S.data, e.id);
+  await queueAttDelete((e.attachments || []).map((a) => a.id));
   await persistLocal();
   renderList();
   scheduleSync();
@@ -1033,7 +1186,9 @@ $('t-empty-btn').addEventListener('click', async () => {
     validate: async (v) => (v.trim().toUpperCase() === EMPTY_WORD ? null : `Scrivi ${EMPTY_WORD} per confermare`),
   });
   if (ok === null) return;
+  const attIds = V.trashedEntries(S.data).flatMap((e) => (e.attachments || []).map((a) => a.id));
   const removed = V.emptyTrash(S.data);
+  await queueAttDelete(attIds);
   await persistLocal();
   renderList();
   scheduleSync();
@@ -1121,8 +1276,15 @@ $('form-chpwd').addEventListener('submit', async (ev) => {
 
 $('s-export').addEventListener('click', async () => {
   const blob = await store.get('vault');
+  const attachments = {};
+  let missing = 0;
+  for (const id of V.referencedAttachments(S.data).keys()) {
+    const rec = await store.getAtt(id);
+    if (rec) attachments[id] = C.toB64(rec.data); else missing++;
+  }
+  if (missing) toast(`${missing} allegati non sono ancora su questo dispositivo e non saranno nel backup`, 4000);
   const a = el('a', {
-    href: URL.createObjectURL(new Blob([JSON.stringify(blob)], { type: 'application/json' })),
+    href: URL.createObjectURL(new Blob([JSON.stringify({ ...blob, attachments })], { type: 'application/json' })),
     download: `cryptopwd-backup-${new Date().toISOString().slice(0, 10)}.json`,
   });
   document.body.append(a);
@@ -1146,6 +1308,9 @@ $('s-import-file').addEventListener('change', async (ev) => {
       incoming = { entries: parseCsvEntries(text).map((e) => ({ ...e, subjectId: real(S.filter.subjectId), categoryId: real(S.filter.subjectId) && real(S.filter.categoryId) })) };
     } else {
       const blob = JSON.parse(text);
+      for (const [id, b64] of Object.entries(blob.attachments || {})) {
+        if (!(await store.getAtt(id))) await store.putAtt(id, C.fromB64(b64));
+      }
       if (C.sameKdf(blob.kdf, S.kdf)) {
         incoming = await C.unseal(S.key, blob);
       } else {

@@ -33,6 +33,16 @@ export const set = (k, v) => tx('readwrite', (s) => s.put(v, k));
 export const del = (k) => tx('readwrite', (s) => s.delete(k));
 export const clear = () => tx('readwrite', (s) => s.clear());
 
+export const keys = () => tx('readonly', (s) => s.getAllKeys());
+
+// Allegati cifrati: chiave "att:<id>" -> { data: Uint8Array (cifrato), addedAt }
+export const getAtt = (id) => get(`att:${id}`);
+export const putAtt = (id, data) => set(`att:${id}`, { data, addedAt: Date.now() });
+export const delAtt = (id) => del(`att:${id}`);
+export async function attIds() {
+  return (await keys()).filter((k) => typeof k === 'string' && k.startsWith('att:')).map((k) => k.slice(4));
+}
+
 export async function getMeta() {
   return (await get('meta')) || {};
 }

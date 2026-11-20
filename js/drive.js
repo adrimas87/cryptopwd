@@ -115,6 +115,51 @@ export async function download(id) {
   return r.json();
 }
 
+// ---- Allegati: un file binario cifrato per allegato ----
+export const ATT_PREFIX = 'cryptopwd-att-';
+
+// Elenca tutti i file allegato creati dall'app: [{ id, name, modifiedTime }]
+export async function listAttachments() {
+  const out = [];
+  let pageToken = '';
+  do {
+    const q = encodeURIComponent(`name contains '${ATT_PREFIX}' and trashed=false`);
+    const r = await call(`${API}/files?q=${q}&spaces=drive&pageSize=1000&fields=nextPageToken,files(id,name,modifiedTime)${pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ''}`);
+    const j = await r.json();
+    out.push(...(j.files || []).filter((f) => f.name.startsWith(ATT_PREFIX)));
+    pageToken = j.nextPageToken || '';
+  } while (pageToken);
+  return out;
+}
+
+export async function uploadAttachment(attId, bytes) {
+  // 1) crea il file (solo metadati) 2) carica il contenuto binario
+  const r = await call(`${API}/files?fields=id`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: `${ATT_PREFIX}${attId}.bin`, mimeType: 'application/octet-stream', description: 'Allegato cifrato CryptoPwd. Non modificare.' }),
+  });
+  const { id } = await r.json();
+  await call(`${UPLOAD}/files/${encodeURIComponent(id)}?uploadType=media&fields=id`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/octet-stream' },
+    body: bytes,
+  });
+  return id;
+}
+
+export async function downloadBinary(id) {
+  const r = await call(`${API}/files/${encodeURIComponent(id)}?alt=media`, { cache: 'no-store' });
+  return new Uint8Array(await r.arrayBuffer());
+}
+
+export async function deleteFile(id) {
+  if (!hasValidToken()) throw new AuthRequiredError();
+  const res = await fetch(`${API}/files/${encodeURIComponent(id)}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+  if (res.status === 401) { token = null; throw new AuthRequiredError('Sessione Google scaduta'); }
+  if (!res.ok && res.status !== 404) throw new Error(`Errore Drive ${res.status}`);
+}
+
 export async function upload(blob, id) {
   const body = JSON.stringify(blob);
   if (id) {

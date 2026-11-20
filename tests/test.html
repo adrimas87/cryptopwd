@@ -30,6 +30,15 @@ try {
   ok('IV diverso a ogni salvataggio', blob2.iv !== blob.iv);
   ok('sameKdf', C.sameKdf(kdf, blob.kdf) && !C.sameKdf(kdf, C.newKdf()));
 
+  // --- allegati ---
+  const ak = await C.newAttachmentKey();
+  const raw = new Uint8Array([1, 2, 3, 250, 0, 7]);
+  const encA = await C.encryptBytes(ak, raw);
+  ok('allegato: roundtrip', (await C.decryptBytes(ak, encA)).join() === raw.join());
+  let attErr = null;
+  try { await C.decryptBytes(await C.newAttachmentKey(), encA); } catch (e) { attErr = e; }
+  ok('allegato: chiave sbagliata rifiutata', !!attErr);
+
   // --- generatore ---
   const g = C.generatePassword(24);
   ok('generatore lunghezza', g.length === 24);

@@ -75,6 +75,13 @@ export function emptyTrash(data) {
   return ids.length;
 }
 
+// Allegati ancora in uso (voci attive e nel cestino): Map id -> metadati
+export function referencedAttachments(data) {
+  const m = new Map();
+  for (const e of alive(data.entries)) for (const a of e.attachments || []) m.set(a.id, a);
+  return m;
+}
+
 // Quante voci/categorie vive dipendono da un soggetto o da una categoria.
 export function usage(data, { subjectId, categoryId }) {
   if (categoryId) return { entries: liveEntries(data).filter((e) => e.categoryId === categoryId).length, categories: 0 };

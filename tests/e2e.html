@@ -45,7 +45,9 @@ async function loadApp() {
 
 function fill(id, v) { $(id).value = v; $(id).dispatchEvent(new Event('input', { bubbles: true })); }
 const titles = () => [...d().querySelectorAll('#list .item-title')].map((n) => n.textContent).sort();
-const driveBlob = () => { const f = Object.values(window.fakeDrive.files)[0]; return f && JSON.parse(f.content); };
+const vaultFile = () => Object.values(window.fakeDrive.files).find((f) => f.name === 'cryptopwd-vault.json');
+const driveBlob = () => { const f = vaultFile(); return f && JSON.parse(f.content); };
+const driveAtts = () => Object.values(window.fakeDrive.files).filter((f) => f.name.startsWith('cryptopwd-att-'));
 async function driveData(pwd) { return (await C.openWithPassword(pwd, driveBlob())).data; }
 const live = (data) => data.entries.filter((e) => !e.deleted && !e.trashedAt).map((e) => e.title).sort();
 const trashed = (data) => data.entries.filter((e) => !e.deleted && e.trashedAt).map((e) => e.title).sort();
@@ -72,7 +74,7 @@ try {
 
   await addEntry('Gmail', 'g-secret');
   await waitFor(async () => live(await driveData(P1)).includes('Gmail'), 'Gmail su Drive');
-  ok('1. nuova voce sincronizzata su Drive (cifrata)', !Object.values(window.fakeDrive.files)[0].content.includes('g-secret'));
+  ok('1. nuova voce sincronizzata su Drive (cifrata)', !vaultFile().content.includes('g-secret'));
 
   // 2. Dispositivo B: ripristino da Drive
   await deleteDb(); await loadApp();
@@ -95,7 +97,7 @@ try {
     const blob = driveBlob();
     const o = await C.openWithPassword(P1, blob);
     o.data.entries.push({ id: 'remote1', title: 'Remote', username: 'r', password: 'r-secret', updatedAt: Date.now(), createdAt: Date.now() });
-    const f = Object.values(window.fakeDrive.files)[0];
+    const f = vaultFile();
     f.content = JSON.stringify(await C.seal(o.key, o.kdf, o.data));
     f.modifiedTime = new Date(Date.now() + 1000).toISOString();
   }
@@ -109,7 +111,7 @@ try {
   {
     const o = await C.openWithPassword(P1, driveBlob());
     o.data.entries.push({ id: 'remote2', title: 'Remote2', password: 'x', updatedAt: Date.now(), createdAt: Date.now() });
-    const f = Object.values(window.fakeDrive.files)[0];
+    const f = vaultFile();
     f.content = JSON.stringify(await C.seal(o.key, o.kdf, o.data));
     f.modifiedTime = new Date(Date.now() + 2000).toISOString();
   }
@@ -384,6 +386,109 @@ try {
   await waitFor(() => !$('dlg-prompt').open && $('btn-trash').hidden, 'cestino svuotato');
   await waitFor(async () => { const dd = await driveData(P2); return trashed(dd).length === 0 && dd.entries.filter((e) => e.deleted).length >= 2; }, 'svuotamento su Drive');
   ok('13. cestino svuotato definitivamente (anche su Drive)', true);
+
+  // 14. Allegati
+  const secretText = 'contenuto segreto del contratto 12345';
+  const attachFile = (name, content, type = 'text/plain') => {
+    const W = frame.contentWindow;
+    const dt = new W.DataTransfer();
+    dt.items.add(new W.File([content], name, { type }));
+    $('e-att-file').files = dt.files;
+    $('e-att-file').dispatchEvent(new Event('change'));
+  };
+  const openGmail = async () => {
+    [...d().querySelectorAll('#list .item-main')].find((b) => b.textContent.includes('Gmail')).click();
+    await waitFor(() => $('dlg-detail').open, 'dettaglio Gmail');
+  };
+  const captureBlobs = () => {
+    const W = frame.contentWindow;
+    const list = [];
+    const orig = W.URL.createObjectURL.bind(W.URL);
+    W.URL.createObjectURL = (b) => { list.push(b); return orig(b); };
+    return list;
+  };
+  const downloadAtt = async (name, list) => {
+    const n = list.length;
+    [...$('d-att-list').querySelectorAll('li')].find((li) => li.textContent.includes(name)).querySelector('[title=Scarica]').click();
+    await waitFor(() => list.length === n + 1, 'download ' + name);
+    return list[n].text();
+  };
+
+  await openGmail();
+  ok('14. nessun allegato: sezione nascosta', $('d-att-row').hidden);
+  $('d-edit').click();
+  attachFile('contratto.txt', secretText);
+  await waitFor(() => $('e-att-list').textContent.includes('contratto.txt'), 'allegato nel modulo');
+  attachFile('foto.png', new Uint8Array([137, 80, 78, 71, 1, 2, 3]), 'image/png');
+  await waitFor(() => $('e-att-list').children.length === 2, 'due allegati');
+  $('form-edit').requestSubmit();
+  await waitFor(() => titles().some((t) => t.includes('Gmail') && t.includes('📎')), 'graffetta in elenco');
+  ok('14. graffetta nell\'elenco', true);
+  await waitFor(() => driveAtts().length === 2, 'allegati caricati su Drive');
+  {
+    const raw = driveAtts().map((f) => new TextDecoder().decode(f.content)).join('');
+    ok('14. allegati su Drive come file separati e cifrati', !raw.includes('segreto') && !vaultFile().content.includes('segreto'));
+    const g = (await driveData(P2)).entries.find((e) => e.title === 'Gmail');
+    ok('14. metadati allegati nel vault cifrato', g.attachments.length === 2 && !!g.attachments[0].key);
+  }
+  let blobs = captureBlobs();
+  await openGmail();
+  ok('14. allegato decifrato correttamente', (await downloadAtt('contratto.txt', blobs)) === secretText);
+  $('dlg-detail').close();
+
+  // nuovo dispositivo: gli allegati arrivano da Drive e si aprono offline
+  await deleteDb(); await loadApp();
+  await waitFor(() => visible('screen-setup'), 'setup dispositivo E');
+  $('btn-restore').click();
+  await promptText(P2);
+  await waitFor(() => visible('screen-main'), 'main su E');
+  $('btn-sync').click();
+  await waitFor(() => $('sync-dot').dataset.state === 'ok', 'sync su E');
+  await sleep(500);
+  window.fakeDrive.failNetwork = true;
+  await loadApp();
+  await waitFor(() => visible('screen-lock'), 'blocco E');
+  fill('unlock-pwd', P2); $('form-unlock').requestSubmit();
+  await waitFor(() => visible('screen-main'), 'sblocco E offline');
+  blobs = captureBlobs();
+  await openGmail();
+  ok('14. allegato disponibile offline su un altro dispositivo', (await downloadAtt('contratto.txt', blobs)) === secretText);
+  window.fakeDrive.failNetwork = false;
+  $('dlg-detail').close();
+
+  // rimozione di un allegato: sparisce anche da Drive
+  await openGmail();
+  $('d-edit').click();
+  [...$('e-att-list').querySelectorAll('li')].find((li) => li.textContent.includes('foto.png')).querySelector('[title="Rimuovi allegato"]').click();
+  $('form-edit').requestSubmit();
+  await waitFor(() => driveAtts().length === 1, 'allegato rimosso da Drive');
+  ok('14. allegato rimosso anche da Drive', true);
+
+  // cambio password principale: gli allegati restano leggibili
+  $('btn-settings').click(); $('s-change-pwd').click();
+  const P3 = 'terza-password-789';
+  fill('c-old', P2); fill('c-new', P3); fill('c-new2', P3);
+  $('form-chpwd').requestSubmit();
+  await waitFor(async () => { try { return !!(await driveData(P3)); } catch { return false; } }, 'nuova password su Drive');
+  $('dlg-settings').close();
+  await openGmail();
+  ok('14. allegati leggibili dopo il cambio della password principale', (await downloadAtt('contratto.txt', blobs)) === secretText);
+  $('dlg-detail').close();
+
+  // cestino e svuotamento: allegati eliminati da Drive solo allo svuotamento
+  await openGmail();
+  $('d-edit').click(); $('e-delete').click();
+  await waitFor(() => $('dlg-confirm').open, 'conferma');
+  $('form-confirm').requestSubmit();
+  await waitFor(() => !$('btn-trash').hidden, 'nel cestino');
+  await sleep(2500);
+  ok('14. nel cestino gli allegati restano su Drive', driveAtts().length === 1);
+  $('btn-trash').click();
+  await waitFor(() => $('dlg-trash').open, 'cestino');
+  $('t-empty-btn').click();
+  await promptText('SVUOTA');
+  await waitFor(() => driveAtts().length === 0, 'allegati eliminati da Drive');
+  ok('14. svuotando il cestino gli allegati spariscono da Drive', true);
 } catch (e) {
   log('FAIL ' + e.message);
   try { log('DEBUG sync=' + $('sync-label').textContent + ' / ' + $('btn-sync').title + ' calls=' + window.fakeDrive.calls.slice(-6).join(',') + ' dlg=' + [...d().querySelectorAll('dialog[open]')].map(x=>x.id) + ' cerr=' + $('c-error').textContent); } catch {}

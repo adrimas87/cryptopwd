@@ -114,6 +114,10 @@
           <a id="d-open" class="icon-btn" target="_blank" rel="noopener noreferrer" aria-label="Apri link" title="Apri link">↗</a>
           <button class="icon-btn" data-copy="url" type="button" aria-label="Copia link">⧉</button>
         </div>
+        <div class="field col" id="d-att-row">
+          <span class="lbl">Allegati</span>
+          <ul id="d-att-list" class="att-list"></ul>
+        </div>
         <div class="field col" id="d-notes-row">
           <span class="lbl">Note</span>
           <pre id="d-notes" class="val notes"></pre>
@@ -159,6 +163,15 @@
           <label class="check"><input id="g-sym" type="checkbox" checked> Simboli</label>
         </div>
         <label>Note <textarea id="e-notes" rows="4" maxlength="10000"></textarea></label>
+        <div class="attach">
+          <div class="attach-head">
+            <span class="attach-title">Allegati</span>
+            <button id="e-attach" class="btn small-btn" type="button">📎 Aggiungi file</button>
+          </div>
+          <ul id="e-att-list" class="att-list"></ul>
+          <input id="e-att-file" type="file" multiple hidden>
+          <p class="muted small">Max 10 MB per file. Gli allegati sono cifrati come le password.</p>
+        </div>
       </div>
       <footer class="dlg-foot">
         <button id="e-delete" class="btn danger" type="button" hidden>Elimina</button>
