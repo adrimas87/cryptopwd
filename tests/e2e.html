@@ -459,7 +459,16 @@ try {
   // rimozione di un allegato: sparisce anche da Drive
   await openGmail();
   $('d-edit').click();
-  [...$('e-att-list').querySelectorAll('li')].find((li) => li.textContent.includes('foto.png')).querySelector('[title="Rimuovi allegato"]').click();
+  const removeFoto = () => [...$('e-att-list').querySelectorAll('li')].find((li) => li.textContent.includes('foto.png')).querySelector('[title="Rimuovi allegato"]').click();
+  removeFoto();
+  await waitFor(() => $('dlg-confirm').open, 'conferma rimozione allegato');
+  $('cf-cancel').click();
+  await waitFor(() => !$('dlg-confirm').open, 'conferma chiusa');
+  ok('14. annullando la conferma l\'allegato resta', $('e-att-list').textContent.includes('foto.png'));
+  removeFoto();
+  await waitFor(() => $('dlg-confirm').open, 'conferma rimozione allegato');
+  $('form-confirm').requestSubmit();
+  await waitFor(() => !$('e-att-list').textContent.includes('foto.png'), 'allegato tolto dal modulo');
   $('form-edit').requestSubmit();
   await waitFor(() => driveAtts().length === 1, 'allegato rimosso da Drive');
   ok('14. allegato rimosso anche da Drive', true);
@@ -504,6 +513,25 @@ try {
   await waitFor(() => shown().join() === 'Ord-Zeta,Ord-Alfa,Ord-Mezzo', 'ordine meno recenti');
   ok('15. ordine per creazione, meno recenti prima', true);
   setSort('name');
+
+  // chiusura della modifica: conferma solo se ci sono cambiamenti non salvati
+  const closeBtn = () => $('dlg-edit').querySelector('[data-close]');
+  $('btn-add').click();
+  closeBtn().click();
+  await sleep(100);
+  ok('16. senza modifiche si chiude senza chiedere', !$('dlg-edit').open && !$('dlg-confirm').open);
+  $('btn-add').click();
+  fill('e-title', 'Non-salvata');
+  closeBtn().click();
+  await waitFor(() => $('dlg-confirm').open, 'conferma modifiche non salvate');
+  $('cf-cancel').click();
+  await waitFor(() => !$('dlg-confirm').open, 'conferma chiusa');
+  ok('16. annullando resta nella modifica con i dati', $('dlg-edit').open && $('e-title').value === 'Non-salvata');
+  closeBtn().click();
+  await waitFor(() => $('dlg-confirm').open, 'conferma modifiche non salvate');
+  $('form-confirm').requestSubmit();
+  await waitFor(() => !$('dlg-edit').open, 'modifica chiusa');
+  ok('16. confermando le modifiche vengono scartate', !titles().includes('Non-salvata'));
 } catch (e) {
   log('FAIL ' + e.message);
   try { log('DEBUG sync=' + $('sync-label').textContent + ' / ' + $('btn-sync').title + ' calls=' + window.fakeDrive.calls.slice(-6).join(',') + ' dlg=' + [...d().querySelectorAll('dialog[open]')].map(x=>x.id) + ' cerr=' + $('c-error').textContent); } catch {}

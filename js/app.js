@@ -90,7 +90,9 @@ function closeAllDialogs() {
 }
 document.addEventListener('click', (e) => {
   const c = e.target.closest('[data-close]');
-  if (c) c.closest('dialog').close();
+  if (!c) return;
+  const dlg = c.closest('dialog');
+  if (dlg.id === 'dlg-edit') closeEditSafely(); else dlg.close();
 });
 
 function askPassword(title, msg, validate) {
@@ -1099,6 +1101,7 @@ function openEdit(id) {
   $('e-delete').hidden = !e;
   editAttachments = [...(e?.attachments || [])];
   renderEditAttachments();
+  editSnapshot = editState();
   openDialog($('dlg-edit'));
   $('e-title').focus();
 }
@@ -1108,9 +1111,26 @@ $('btn-add').addEventListener('click', () => openEdit(null));
 function renderEditAttachments() {
   $('e-att-list').replaceChildren(...editAttachments.map((a) => attRow(a, [
     el('button', { class: 'icon-btn', type: 'button', title: 'Rimuovi allegato', ariaLabel: `Rimuovi ${a.name}`, textContent: '✕',
-      onclick: () => { editAttachments = editAttachments.filter((x) => x.id !== a.id); renderEditAttachments(); } }),
+      onclick: async () => {
+        if (!(await confirmBox('Rimuovere l\'allegato?', `"${a.name}" verrà eliminato da questa password, su tutti i dispositivi, quando premi Salva.`, 'Rimuovi'))) return;
+        editAttachments = editAttachments.filter((x) => x.id !== a.id);
+        renderEditAttachments();
+      } }),
   ])));
 }
+
+// Chiudendo la modifica (✕, Annulla, Esc) con cambiamenti non salvati si chiede conferma.
+// Il blocco automatico invece chiude sempre senza chiedere (closeAllDialogs).
+let editSnapshot = '';
+function editState() {
+  return JSON.stringify([...['e-subject', 'e-category', 'e-title', 'e-user', 'e-pwd', 'e-url', 'e-notes'].map((id) => $(id).value), editAttachments.map((a) => a.id)]);
+}
+async function closeEditSafely() {
+  if (editState() !== editSnapshot
+    && !(await confirmBox('Annullare le modifiche?', 'Le modifiche non salvate a questa password andranno perse.', 'Annulla modifiche'))) return;
+  $('dlg-edit').close();
+}
+$('dlg-edit').addEventListener('cancel', (ev) => { ev.preventDefault(); closeEditSafely(); });
 // Le foto vengono ridotte prima di cifrarle: lato lungo max 1600 px (documenti ancora leggibili),
 // JPEG qualità 0,8. Una foto da 2-5 MB diventa di solito 200-400 kB. Si perdono anche i metadati
 // EXIF (posizione GPS, modello del telefono). Se il risultato non è più piccolo si tiene l'originale.
