@@ -12,6 +12,19 @@ let tokenClient = null;
 let token = null;
 let tokenExp = 0;
 
+// Il token (accesso ai soli file dell'app, scade in ~1 ora) resta nella sessione del browser:
+// sopravvive al ricaricamento della pagina, sparisce chiudendo l'app o scollegando Drive.
+// Senza, ogni ricaricamento richiederebbe di nuovo l'accesso a Google.
+const TOKEN_KEY = 'cryptopwd-google-token';
+function saveToken() {
+  try { token ? sessionStorage.setItem(TOKEN_KEY, JSON.stringify({ token, tokenExp })) : sessionStorage.removeItem(TOKEN_KEY); } catch { /* non disponibile */ }
+}
+try {
+  const saved = JSON.parse(sessionStorage.getItem(TOKEN_KEY) || 'null');
+  if (saved?.token && Date.now() < saved.tokenExp - 60_000) ({ token, tokenExp } = saved);
+  else sessionStorage.removeItem(TOKEN_KEY);
+} catch { /* non disponibile */ }
+
 // Account Google usato l'ultima volta, passato come login_hint: senza, chi ha più
 // account sul dispositivo vede la scelta dell'account a ogni sblocco. Resta solo qui.
 const HINT_KEY = 'cryptopwd-google-account';
@@ -27,6 +40,9 @@ async function rememberAccount() {
     if (email) setHint(email);
   } catch { /* non indispensabile */ }
 }
+
+// Email dell'account Google collegato, se nota (mostrata nelle Impostazioni).
+export const accountEmail = () => getHint();
 
 export const isConfigured = () => !!GOOGLE_CLIENT_ID && !GOOGLE_CLIENT_ID.startsWith('INSERISCI');
 export const hasValidToken = () => !!token && Date.now() < tokenExp - 60_000;
@@ -83,6 +99,7 @@ export async function authorize({ hint } = {}) {
           if (!google.accounts.oauth2.hasGrantedAllScopes(resp, SCOPE)) return pending?.reject(new AuthRequiredError('Permesso su Drive non concesso'));
           token = resp.access_token;
           tokenExp = Date.now() + Number(resp.expires_in || 3600) * 1000;
+          saveToken();
           if (!getHint()) rememberAccount();
           pending?.resolve(token);
         },
@@ -100,13 +117,14 @@ export function signOut() {
   if (token && window.google?.accounts?.oauth2) google.accounts.oauth2.revoke(token, () => {});
   token = null;
   tokenExp = 0;
+  saveToken();
   setHint('');
 }
 
 async function call(url, opts = {}) {
   if (!hasValidToken()) throw new AuthRequiredError();
   const res = await fetch(url, { ...opts, headers: { ...(opts.headers || {}), Authorization: `Bearer ${token}` } });
-  if (res.status === 401) { token = null; throw new AuthRequiredError('Sessione Google scaduta'); }
+  if (res.status === 401) { token = null; saveToken(); throw new AuthRequiredError('Sessione Google scaduta'); }
   if (!res.ok) throw new Error(`Errore Drive ${res.status}: ${(await res.text()).slice(0, 200)}`);
   return res;
 }
@@ -175,7 +193,7 @@ export async function downloadBinary(id) {
 export async function deleteFile(id) {
   if (!hasValidToken()) throw new AuthRequiredError();
   const res = await fetch(`${API}/files/${encodeURIComponent(id)}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
-  if (res.status === 401) { token = null; throw new AuthRequiredError('Sessione Google scaduta'); }
+  if (res.status === 401) { token = null; saveToken(); throw new AuthRequiredError('Sessione Google scaduta'); }
   if (!res.ok && res.status !== 404) throw new Error(`Errore Drive ${res.status}`);
 }
 

@@ -1300,7 +1300,7 @@ function renderSettingsDrive() {
   let txt;
   if (!drive.isConfigured()) txt = 'Client ID Google non configurato in js/config.js.';
   else if (!linked) txt = 'Non collegato. I dati restano solo su questo dispositivo.';
-  else txt = `Collegato · ultima sincronizzazione: ${fmtDate(S.meta.lastSync)}${S.meta.dirty ? ' · modifiche in attesa' : ''}`;
+  else txt = `Collegato${drive.accountEmail() ? ` a ${drive.accountEmail()}` : ''} · ultima sincronizzazione: ${fmtDate(S.meta.lastSync)}${S.meta.dirty ? ' · modifiche in attesa' : ''}`;
   $('s-drive-status').textContent = txt;
   $('s-drive-connect').hidden = linked || !drive.isConfigured();
   $('s-sync-now').hidden = !linked;
