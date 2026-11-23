@@ -33,6 +33,8 @@
 
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; }
+/* niente "trascina giù per aggiornare": ricaricare blocca l'app (la chiave sta solo in memoria) */
+html, body { overscroll-behavior-y: contain; }
 body {
   background: var(--bg);
   color: var(--text);
