@@ -12,6 +12,22 @@ let tokenClient = null;
 let token = null;
 let tokenExp = 0;
 
+// Account Google usato l'ultima volta, passato come login_hint: senza, chi ha più
+// account sul dispositivo vede la scelta dell'account a ogni sblocco. Resta solo qui.
+const HINT_KEY = 'cryptopwd-google-account';
+const getHint = () => { try { return localStorage.getItem(HINT_KEY) || ''; } catch { return ''; } };
+const setHint = (v) => { try { v ? localStorage.setItem(HINT_KEY, v) : localStorage.removeItem(HINT_KEY); } catch { /* archiviazione non disponibile */ } };
+
+// Legge l'email dell'account collegato (about.get è consentito dallo scope drive.file).
+async function rememberAccount() {
+  try {
+    const r = await fetch(`${API}/about?fields=user(emailAddress)`, { headers: { Authorization: `Bearer ${token}` } });
+    if (!r.ok) return;
+    const email = (await r.json())?.user?.emailAddress;
+    if (email) setHint(email);
+  } catch { /* non indispensabile */ }
+}
+
 export const isConfigured = () => !!GOOGLE_CLIENT_ID && !GOOGLE_CLIENT_ID.startsWith('INSERISCI');
 export const hasValidToken = () => !!token && Date.now() < tokenExp - 60_000;
 
@@ -67,12 +83,14 @@ export async function authorize({ hint } = {}) {
           if (!google.accounts.oauth2.hasGrantedAllScopes(resp, SCOPE)) return pending?.reject(new AuthRequiredError('Permesso su Drive non concesso'));
           token = resp.access_token;
           tokenExp = Date.now() + Number(resp.expires_in || 3600) * 1000;
+          if (!getHint()) rememberAccount();
           pending?.resolve(token);
         },
         error_callback: (err) => pending?.reject(new AuthRequiredError(err?.type === 'popup_closed' ? 'Accesso annullato' : err?.message || 'Accesso non riuscito')),
       });
     }
-    tokenClient.requestAccessToken({ prompt: '', ...(hint ? { login_hint: hint } : {}) });
+    const loginHint = hint || getHint();
+    tokenClient.requestAccessToken({ prompt: '', ...(loginHint ? { login_hint: loginHint } : {}) });
   });
 }
 
@@ -82,6 +100,7 @@ export function signOut() {
   if (token && window.google?.accounts?.oauth2) google.accounts.oauth2.revoke(token, () => {});
   token = null;
   tokenExp = 0;
+  setHint('');
 }
 
 async function call(url, opts = {}) {
