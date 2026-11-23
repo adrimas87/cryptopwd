@@ -54,6 +54,7 @@
     <form id="form-unlock" class="card narrow stack" autocomplete="off">
       <div class="logo" aria-hidden="true"></div>
       <h1>CryptoPwd</h1>
+      <button id="btn-bio" class="btn primary" type="button" hidden>👆 Sblocca con impronta o volto</button>
       <label>Password principale
         <input id="unlock-pwd" type="password" required autocomplete="current-password" autofocus>
       </label>
@@ -217,6 +218,13 @@
           </select>
         </label>
         <button id="s-change-pwd" class="btn" type="button">Cambia password principale</button>
+        <div id="s-bio-box" class="stack" hidden>
+          <div class="row wrap">
+            <button id="s-bio-on" class="btn" type="button">👆 Attiva sblocco con impronta o volto</button>
+            <button id="s-bio-off" class="btn" type="button">Disattiva sblocco con impronta o volto</button>
+          </div>
+          <p id="s-bio-status" class="muted small"></p>
+        </div>
 
         <h3>Backup e importazione</h3>
         <div class="row wrap">

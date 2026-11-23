@@ -2,6 +2,7 @@ import * as C from './crypto.js';
 import * as V from './vault.js';
 import * as store from './storage.js';
 import * as drive from './drive.js';
+import * as bio from './biometric.js';
 import { parseCsvEntries } from './csv.js';
 import { DEFAULT_AUTOLOCK_MIN, CLIPBOARD_CLEAR_SEC } from './config.js';
 
@@ -17,6 +18,8 @@ const S = {
   hiddenAt: 0,
   syncState: 'idle',
 };
+// Sblocco biometrico: { credId, salt, iv, ct } (password principale cifrata con la chiave della passkey)
+let bioRec = null;
 
 // =====================================================================
 // Utilità UI
@@ -247,6 +250,7 @@ async function doSync({ password, force = false, interactive = false } = {}) {
     let remoteBlob = null;
     let remoteData = null;
     let remoteKey = null;
+    let remotePwd = null;
 
     if (file) {
       remoteBlob = await drive.download(file.id);
@@ -262,15 +266,15 @@ async function doSync({ password, force = false, interactive = false } = {}) {
         };
         let ok = false;
         if (password) {
-          try { await tryPwd(password); ok = true; } catch (e) { if (!(e instanceof C.WrongPasswordError)) throw e; }
+          try { await tryPwd(password); ok = true; remotePwd = password; } catch (e) { if (!(e instanceof C.WrongPasswordError)) throw e; }
         }
         if (!ok) {
-          const pw = await askPassword(
+          remotePwd = await askPassword(
             'Password del vault su Drive',
             'Il vault su Google Drive è protetto da una password principale diversa (forse l\'hai cambiata su un altro dispositivo). Inseriscila per unire i dati.',
             async (v) => { try { await tryPwd(v); return null; } catch (e) { if (e instanceof C.WrongPasswordError) return 'Password errata'; throw e; } }
           );
-          if (pw === null) return setSync('error', 'Sincronizzazione annullata: password del vault su Drive non inserita');
+          if (remotePwd === null) return setSync('error', 'Sincronizzazione annullata: password del vault su Drive non inserita');
         }
       }
     }
@@ -281,6 +285,7 @@ async function doSync({ password, force = false, interactive = false } = {}) {
     if (remoteBlob && !C.sameKdf(remoteBlob.kdf, S.kdf)) {
       if ((remoteData.keyChangedAt || 0) >= (S.data.keyChangedAt || 0)) { key = remoteKey; kdf = remoteBlob.kdf; }
     }
+    const adoptedRemotePwd = key !== S.key ? remotePwd : null;
 
     const merged = remoteData ? V.merge(S.data, remoteData) : S.data;
     const localChanged = V.fingerprint(merged) !== V.fingerprint(S.data) || !C.sameKdf(kdf, S.kdf);
@@ -291,6 +296,7 @@ async function doSync({ password, force = false, interactive = false } = {}) {
     S.kdf = kdf;
     S.data = merged;
     if (localChanged) { await persistLocal({ dirty: false }); renderList(); }
+    if (adoptedRemotePwd) offerBioUpdate(adoptedRemotePwd); // password cambiata su un altro dispositivo
 
     // Allegati: si caricano PRIMA del vault, così gli altri dispositivi li trovano già su Drive.
     S.meta = await store.patchMeta({ attPending: true });
@@ -442,7 +448,9 @@ async function boot() {
     $('create-drive').checked = drive.isConfigured();
     show('screen-setup');
   } else {
+    bioRec = (await store.get('bio')) || null;
     showLock();
+    if (bioRec) unlockWithBio({ auto: true }); // propone subito impronta/volto
   }
 }
 
@@ -453,8 +461,9 @@ function showLock() {
   if (S.meta.driveLinked) parts.push(`Ultima sincronizzazione: ${fmtDate(S.meta.lastSync)}`);
   if (!navigator.onLine) parts.push('Offline: verrà usata la copia locale');
   $('lock-info').textContent = parts.join(' · ');
+  $('btn-bio').hidden = !bioRec;
   show('screen-lock');
-  setTimeout(() => $('unlock-pwd').focus(), 50);
+  if (!bioRec) setTimeout(() => $('unlock-pwd').focus(), 50);
 }
 
 bindMeter($('create-pwd'), $('create-meter'));
@@ -510,35 +519,71 @@ $('btn-restore').addEventListener('click', async () => {
   }
 });
 
+function unlockError(msg) {
+  $('unlock-error').textContent = msg;
+  $('unlock-error').hidden = false;
+}
+
+// Apre il vault locale con la password principale. Il token Google va richiesto subito,
+// nel gesto dell'utente (popup): per questo parte prima della derivazione della chiave.
+async function openVault(pwd) {
+  const wantSync = S.meta.driveLinked && drive.isConfigured() && navigator.onLine && !drive.hasValidToken();
+  const auth = wantSync ? drive.authorize().catch(() => null) : Promise.resolve(null);
+  const blob = await store.get('vault');
+  const { key, kdf, data } = await C.openWithPassword(pwd, blob);
+  Object.assign(S, { key, kdf, data: V.normalize(data) });
+  $('unlock-pwd').value = '';
+  enterMain();
+  await auth;
+  sync({ password: pwd });
+}
+
 $('form-unlock').addEventListener('submit', async (e) => {
   e.preventDefault();
-  const pwd = $('unlock-pwd').value;
   const btn = $('btn-unlock');
   btn.disabled = true;
   btn.textContent = 'Sblocco…';
   $('unlock-error').hidden = true;
-
-  // Il token Google va richiesto subito, nel gesto dell'utente (popup).
-  const wantSync = S.meta.driveLinked && drive.isConfigured() && navigator.onLine && !drive.hasValidToken();
-  const auth = wantSync ? drive.authorize().catch(() => null) : Promise.resolve(null);
-
   try {
-    const blob = await store.get('vault');
-    const { key, kdf, data } = await C.openWithPassword(pwd, blob);
-    Object.assign(S, { key, kdf, data: V.normalize(data) });
-    $('unlock-pwd').value = '';
-    enterMain();
-    await auth;
-    sync({ password: pwd });
+    await openVault($('unlock-pwd').value);
   } catch (err) {
-    $('unlock-error').textContent = err instanceof C.WrongPasswordError ? 'Password errata' : err.message;
-    $('unlock-error').hidden = false;
+    unlockError(err instanceof C.WrongPasswordError ? 'Password errata' : err.message);
     $('unlock-pwd').select();
   } finally {
     btn.disabled = false;
     btn.textContent = 'Sblocca';
   }
 });
+
+// Sblocco con impronta digitale o volto (vedi js/biometric.js)
+let bioBusy = false;
+async function unlockWithBio({ auto = false } = {}) {
+  if (!bioRec || bioBusy || S.key) return;
+  bioBusy = true;
+  const btn = $('btn-bio');
+  btn.disabled = true;
+  $('unlock-error').hidden = true;
+  try {
+    const pwd = await bio.unlock(bioRec);
+    try {
+      await openVault(pwd);
+    } catch (err) {
+      if (!(err instanceof C.WrongPasswordError)) throw err;
+      // La password principale è stata cambiata (es. su un altro dispositivo): quella salvata non vale più.
+      await disableBio();
+      $('btn-bio').hidden = true;
+      unlockError('La password principale è cambiata: inseriscila qui. Poi potrai riattivare impronta o volto nelle Impostazioni.');
+      $('unlock-pwd').focus();
+    }
+  } catch (err) {
+    // all'avvio alcuni browser rifiutano la richiesta senza un tocco: resta il pulsante
+    if (!auto && !(err instanceof bio.BioCancelledError)) unlockError(err.message);
+  } finally {
+    bioBusy = false;
+    btn.disabled = false;
+  }
+}
+$('btn-bio').addEventListener('click', () => unlockWithBio());
 
 function enterMain() {
   S.lastActivity = Date.now();
@@ -1056,13 +1101,53 @@ function renderEditAttachments() {
       onclick: () => { editAttachments = editAttachments.filter((x) => x.id !== a.id); renderEditAttachments(); } }),
   ])));
 }
+// Le foto vengono ridotte prima di cifrarle: lato lungo max 1600 px (documenti ancora leggibili),
+// JPEG qualità 0,8. Una foto da 2-5 MB diventa di solito 200-400 kB. Si perdono anche i metadati
+// EXIF (posizione GPS, modello del telefono). Se il risultato non è più piccolo si tiene l'originale.
+const IMG_MAX_SIDE = 1600;
+const IMG_QUALITY = 0.8;
+const IMG_SHRINK_FROM = 300 * 1024;
+const MAX_IMG_INPUT_BYTES = 50 * 1024 * 1024;
+
+async function shrinkImage(file) {
+  if (!/^image\/(jpeg|png|webp|heic|heif|bmp)$/i.test(file.type) || file.size < IMG_SHRINK_FROM) return file;
+  let bmp;
+  try {
+    bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
+  } catch {
+    return file; // formato non decodificabile da questo browser (es. HEIC su Chrome)
+  }
+  try {
+    const scale = Math.min(1, IMG_MAX_SIDE / Math.max(bmp.width, bmp.height));
+    const w = Math.max(1, Math.round(bmp.width * scale));
+    const h = Math.max(1, Math.round(bmp.height * scale));
+    const canvas = el('canvas', { width: w, height: h });
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#fff'; // eventuali trasparenze (PNG) su sfondo bianco
+    ctx.fillRect(0, 0, w, h);
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(bmp, 0, 0, w, h);
+    const out = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', IMG_QUALITY));
+    canvas.width = canvas.height = 0;
+    if (!out || out.size >= file.size) return file;
+    const name = file.name.replace(/\.[^.]*$/, '') + '.jpg';
+    return new File([out], name, { type: 'image/jpeg', lastModified: file.lastModified });
+  } finally {
+    bmp.close?.();
+  }
+}
+
 $('e-attach').addEventListener('click', () => $('e-att-file').click());
 $('e-att-file').addEventListener('change', async (ev) => {
   const files = [...ev.target.files];
   ev.target.value = '';
-  for (const f of files) {
-    if (f.size > MAX_ATT_BYTES) { toast(`"${f.name}" supera 10 MB`, 3500); continue; }
+  for (const orig of files) {
+    const isImg = orig.type.startsWith('image/');
+    if (orig.size > (isImg ? MAX_IMG_INPUT_BYTES : MAX_ATT_BYTES)) { toast(`"${orig.name}" è troppo grande`, 3500); continue; }
     try {
+      const f = isImg ? await shrinkImage(orig) : orig;
+      if (f.size > MAX_ATT_BYTES) { toast(`"${orig.name}" supera 10 MB`, 3500); continue; }
+      if (f !== orig) toast(`Foto ridotta: ${fmtSize(orig.size)} → ${fmtSize(f.size)}`, 2500);
       const key = await C.newAttachmentKey();
       const data = await C.encryptBytes(key, new Uint8Array(await f.arrayBuffer()));
       const id = V.newId();
@@ -1212,8 +1297,77 @@ function renderSettingsDrive() {
   $('s-drive-disconnect').hidden = !linked;
 }
 
+async function renderSettingsBio() {
+  const available = await bio.isAvailable();
+  $('s-bio-box').hidden = !available && !bioRec;
+  $('s-bio-on').hidden = !!bioRec;
+  $('s-bio-off').hidden = !bioRec;
+  $('s-bio-status').textContent = bioRec
+    ? 'Attivo su questo dispositivo. La password principale resta valida: tienila comunque a portata, serve sugli altri dispositivi e se cambi telefono.'
+    : 'Sblocca l\'app con impronta digitale o riconoscimento del volto invece di scrivere la password principale. Vale solo per questo dispositivo.';
+}
+
+async function saveBio(rec) {
+  bioRec = rec;
+  await store.set('bio', rec);
+}
+async function disableBio() {
+  bioRec = null;
+  await store.del('bio');
+}
+
+// Dopo un cambio della password principale: ricollega la passkey alla nuova password.
+async function offerBioUpdate(newPwd) {
+  if (!bioRec) return;
+  const pending = { credId: bioRec.credId, salt: bioRec.salt };
+  await disableBio(); // la password salvata non è più valida in ogni caso
+  if (!(await confirmBox('Aggiornare impronta o volto?', 'La password principale è cambiata. Conferma con impronta o volto per continuare a usarli per sbloccare l\'app.', 'Conferma'))) {
+    return toast('Sblocco con impronta disattivato: puoi riattivarlo nelle Impostazioni', 4000);
+  }
+  try {
+    await saveBio(await bio.seal(pending, newPwd));
+    toast('Sblocco con impronta aggiornato');
+  } catch (e) {
+    toast(e instanceof bio.BioCancelledError ? 'Sblocco con impronta disattivato: puoi riattivarlo nelle Impostazioni' : e.message, 4000);
+  }
+}
+
+$('s-bio-on').addEventListener('click', async () => {
+  // si verifica la password attuale: è quella che verrà protetta dalla passkey
+  let verified = null;
+  const pw = await askPassword('Attiva impronta o volto', 'Inserisci la password principale. Verrà cifrata su questo dispositivo con una chiave che si apre solo con la tua impronta o il tuo volto.', async (v) => {
+    try { await C.unseal(await C.deriveKey(v, S.kdf), await store.get('vault')); verified = v; return null; } catch (e) { if (e instanceof C.WrongPasswordError) return 'Password errata'; throw e; }
+  });
+  if (pw === null || verified === null) return;
+  // un tocco dedicato: alcuni browser (Safari) chiedono l'impronta solo dentro un gesto dell'utente
+  if (!(await confirmBox('Attiva impronta o volto', 'Ora il telefono ti chiederà impronta o volto per creare la chiave di sblocco di CryptoPwd.', 'Continua'))) return;
+  try {
+    const r = await bio.begin(verified);
+    if (r.done) {
+      await saveBio(r.record);
+    } else {
+      if (!(await confirmBox('Ancora un passaggio', 'Conferma di nuovo con impronta o volto per completare l\'attivazione.', 'Conferma'))) return;
+      await saveBio(await bio.seal(r.pending, verified));
+    }
+    toast('Sblocco con impronta o volto attivato');
+  } catch (e) {
+    if (!(e instanceof bio.BioCancelledError)) toast(e.message, 5000);
+  } finally {
+    verified = null;
+    renderSettingsBio();
+  }
+});
+
+$('s-bio-off').addEventListener('click', async () => {
+  if (!(await confirmBox('Disattivare impronta o volto?', 'Per sbloccare servirà di nuovo la password principale. La passkey "CryptoPwd" resta nel gestore delle passkey del telefono: se vuoi puoi eliminarla da lì.', 'Disattiva'))) return;
+  await disableBio();
+  renderSettingsBio();
+  toast('Sblocco con impronta o volto disattivato');
+});
+
 function openSettings() {
   renderSettingsDrive();
+  renderSettingsBio();
   $('s-autolock').value = String(Number(S.meta.autolockMin) || DEFAULT_AUTOLOCK_MIN);
   openDialog($('dlg-settings'));
 }
@@ -1265,6 +1419,7 @@ $('form-chpwd').addEventListener('submit', async (ev) => {
     await persistLocal();
     $('dlg-chpwd').close();
     toast('Password principale cambiata');
+    if (bioRec) await offerBioUpdate(newP);
     // su Drive c'è ancora il vault con la vecchia password: serve per unirlo
     sync({ force: true, interactive: true, password: oldP });
   } catch (e) {
