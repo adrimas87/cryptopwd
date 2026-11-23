@@ -2,6 +2,9 @@
 
 Gestore di password personale, utilizzabile da qualsiasi dispositivo (telefono, tablet, PC) come app installabile (PWA).
 
+- **App:** <https://app.cryptopwd.it> (questo repository, GitHub Pages con dominio personalizzato: file `CNAME`)
+- **Sito, informativa privacy e termini:** <https://cryptopwd.it> (repository separato [cryptopwd-sito](https://github.com/adrimas87/cryptopwd-sito); deve restare su un'origine diversa dall'app, perché il service worker dell'app intercetta tutte le navigazioni nel suo ambito)
+
 - **Cifratura sul dispositivo**: AES-256-GCM con chiave derivata dalla password principale (PBKDF2-SHA256, 600.000 iterazioni). Google, il server che ospita l'app e chiunque altro vedono solo dati cifrati.
 - **Database sul tuo Google Drive**: un unico file cifrato, `cryptopwd-vault.json`.
 - **Copia locale su ogni dispositivo**: le password si leggono anche senza campo.
