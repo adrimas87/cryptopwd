@@ -59,7 +59,16 @@ async function addEntry(title, pwd) {
   await waitFor(() => titles().includes(title), `voce ${title} in elenco`);
 }
 
-const V_trashCount = () => Number($('trash-count').textContent);
+// tiene premuto un pulsante per ms millisecondi
+async function press(id, ms) {
+  const o = { bubbles: true, button: 0, pointerId: 1, isPrimary: true };
+  $(id).dispatchEvent(new PointerEvent('pointerdown', o));
+  await sleep(ms);
+  $(id).dispatchEvent(new PointerEvent('pointerup', o));
+  await sleep(50);
+}
+
+const V_trashCount =() => Number($('trash-count').textContent);
 const P1 = 'prima-password-123', P2 = 'seconda-password-456';
 
 try {
@@ -240,6 +249,11 @@ try {
   await waitFor(() => !$('e-category').disabled, 'categorie di Mario');
   $('e-category').value = [...$('e-category').options].find((o) => o.textContent === 'Email').value;
   $('form-edit').requestSubmit();
+  await waitFor(() => $('dlg-hold').open, 'conferma spostamento tenendo premuto');
+  await press('hd-ok', 300);
+  ok('9. pressione breve: spostamento non confermato', $('dlg-hold').open && $('dlg-edit').open);
+  await press('hd-ok', 2200);
+  await waitFor(() => !$('dlg-hold').open && !$('dlg-edit').open, 'spostamento confermato');
   chipBtn('subj-chips', 'Mario').click();
   chipBtn('cat-chips', 'Email').click();
   await waitFor(() => titles().join() === 'Gmail', 'Gmail in Mario › Email');
@@ -532,6 +546,33 @@ try {
   $('form-confirm').requestSubmit();
   await waitFor(() => !$('dlg-edit').open, 'modifica chiusa');
   ok('16. confermando le modifiche vengono scartate', !titles().includes('Non-salvata'));
+
+  // pulsante Sposta nel dettaglio: soggetto/categoria nuovi, conferma tenendo premuto 2 s
+  const openItem = (t) => [...d().querySelectorAll('#list .item-main')].find((b) => b.textContent.includes(t)).click();
+  openItem('Ord-Alfa');
+  await waitFor(() => $('dlg-detail').open, 'dettaglio Ord-Alfa');
+  $('d-move').click();
+  await waitFor(() => $('dlg-move').open && !$('dlg-detail').open, 'finestra Sposta');
+  ok('17. stessa posizione: pulsante disattivato', $('mv-ok').disabled);
+  $('mv-subject').value = '__new'; $('mv-subject').dispatchEvent(new Event('change'));
+  await waitFor(() => $('dlg-prompt').open, 'nuovo soggetto da Sposta');
+  fill('p-input', 'Archivio'); $('form-prompt').requestSubmit();
+  await waitFor(() => !$('mv-category').disabled && $('mv-subject').selectedOptions[0].textContent === 'Archivio', 'soggetto Archivio scelto');
+  $('mv-category').value = '__new'; $('mv-category').dispatchEvent(new Event('change'));
+  await waitFor(() => $('dlg-prompt').open, 'nuova categoria da Sposta');
+  fill('p-input', 'Vecchie'); $('form-prompt').requestSubmit();
+  await waitFor(() => $('mv-category').selectedOptions[0].textContent === 'Vecchie', 'categoria Vecchie scelta');
+  ok('17. nuova posizione: pulsante attivo', !$('mv-ok').disabled && $('dlg-move').open);
+  $('mv-ok').click();
+  await press('mv-ok', 500);
+  ok('17. click o pressione breve non spostano', $('dlg-move').open);
+  await press('mv-ok', 2200);
+  await waitFor(() => !$('dlg-move').open, 'Sposta chiusa');
+  ok('17. avviso di spostamento', $('toast').textContent === 'Spostata in Archivio › Vecchie');
+  chipBtn('subj-chips', 'Archivio').click();
+  chipBtn('cat-chips', 'Vecchie').click();
+  await waitFor(() => titles().join() === 'Ord-Alfa', 'Ord-Alfa in Archivio › Vecchie');
+  ok('17. password spostata in Archivio › Vecchie', true);
 } catch (e) {
   log('FAIL ' + e.message);
   try { log('DEBUG sync=' + $('sync-label').textContent + ' / ' + $('btn-sync').title + ' calls=' + window.fakeDrive.calls.slice(-6).join(',') + ' dlg=' + [...d().querySelectorAll('dialog[open]')].map(x=>x.id) + ' cerr=' + $('c-error').textContent); } catch {}

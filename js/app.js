@@ -166,6 +166,61 @@ function confirmBox(title, msg, okLabel = 'Conferma') {
   });
 }
 
+// Pulsante "tieni premuto": l'azione parte solo dopo HOLD_MS di pressione continua
+// (dito, mouse, oppure Invio/Spazio da tastiera). Rilasciando prima non succede nulla.
+const HOLD_MS = 2000;
+function bindHold(btn, onDone) {
+  let timer = 0;
+  const stop = () => { clearTimeout(timer); timer = 0; btn.classList.remove('holding'); };
+  const start = () => {
+    if (btn.disabled || timer) return;
+    btn.classList.add('holding');
+    timer = setTimeout(() => { stop(); navigator.vibrate?.(40); onDone(); }, HOLD_MS);
+  };
+  btn.addEventListener('pointerdown', (ev) => {
+    if (ev.button > 0) return;
+    ev.preventDefault();
+    try { btn.setPointerCapture(ev.pointerId); } catch { /* non supportato */ }
+    start();
+  });
+  for (const t of ['pointerup', 'pointercancel', 'lostpointercapture']) btn.addEventListener(t, () => {
+    if (timer) toastOnce('Tieni premuto per 2 secondi');
+    stop();
+  });
+  btn.addEventListener('keydown', (ev) => { if ((ev.key === 'Enter' || ev.key === ' ') && !ev.repeat) { ev.preventDefault(); start(); } });
+  btn.addEventListener('keyup', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') stop(); });
+  btn.addEventListener('blur', stop);
+  btn.addEventListener('contextmenu', (ev) => ev.preventDefault()); // niente menu del tocco prolungato
+  btn.addEventListener('click', (ev) => ev.preventDefault());
+  return stop;
+}
+
+let holdResolve = null;
+const holdStop = bindHold($('hd-ok'), () => holdResolve?.(true));
+// Come confirmBox, ma si conferma tenendo premuto il pulsante per 2 secondi.
+function holdBox(title, msg, okLabel) {
+  return new Promise((resolve) => {
+    const d = $('dlg-hold');
+    $('hd-title').textContent = title;
+    $('hd-msg').textContent = msg;
+    $('hd-ok').querySelector('.hold-label').textContent = okLabel;
+    let settled = false;
+    const done = (v) => {
+      if (settled) return;
+      settled = true;
+      holdResolve = null;
+      holdStop();
+      d.onclose = null;
+      if (d.open) d.close();
+      resolve(v);
+    };
+    holdResolve = done;
+    $('hd-cancel').onclick = () => done(false);
+    d.onclose = () => done(false);
+    openDialog(d);
+  });
+}
+
 let clipTimer;
 async function copy(text, label) {
   if (!text) return;
@@ -1034,17 +1089,16 @@ $('d-edit').addEventListener('click', () => { $('dlg-detail').close(); openEdit(
 // =====================================================================
 const NEW = '__new';
 
-function fillSubjectSelect(selected) {
-  $('e-subject').replaceChildren(
+function fillSubjectSelect(sel, selected) {
+  sel.replaceChildren(
     el('option', { value: '', textContent: '— Nessuno —' }),
     ...V.subjectsOf(S.data).map((s) => el('option', { value: s.id, textContent: s.name })),
     el('option', { value: NEW, textContent: '+ Nuovo soggetto…' }),
   );
-  $('e-subject').value = selected && V.findLive(S.data, 'subjects', selected) ? selected : '';
+  sel.value = selected && V.findLive(S.data, 'subjects', selected) ? selected : '';
 }
 
-function fillCategorySelect(subjectId, selected) {
-  const sel = $('e-category');
+function fillCategorySelect(sel, subjectId, selected) {
   if (!subjectId) {
     sel.replaceChildren(el('option', { value: '', textContent: '— Scegli prima un soggetto —' }));
     sel.disabled = true;
@@ -1060,38 +1114,92 @@ function fillCategorySelect(subjectId, selected) {
   sel.value = selected && cats.some((c) => c.id === selected) ? selected : '';
 }
 
-let lastSubjectValue = '';
-let lastCategoryValue = '';
-$('e-subject').addEventListener('change', async () => {
-  if ($('e-subject').value === NEW) {
-    const s = await createSubject();
-    fillSubjectSelect(s ? s.id : lastSubjectValue);
-  }
-  if ($('e-subject').value !== lastSubjectValue) fillCategorySelect($('e-subject').value, null);
-  lastSubjectValue = $('e-subject').value;
-  lastCategoryValue = $('e-category').value;
+// Coppia di menu Soggetto/Categoria (con "+ Nuovo…"), usata in Modifica e in Sposta.
+function placePicker(subjSel, catSel, onChange = () => {}) {
+  let lastS = '';
+  let lastC = '';
+  subjSel.addEventListener('change', async () => {
+    if (subjSel.value === NEW) {
+      const s = await createSubject();
+      fillSubjectSelect(subjSel, s ? s.id : lastS);
+    }
+    if (subjSel.value !== lastS) fillCategorySelect(catSel, subjSel.value, null);
+    lastS = subjSel.value;
+    lastC = catSel.value;
+    onChange();
+  });
+  catSel.addEventListener('change', async () => {
+    if (catSel.value === NEW) {
+      const c = await createCategory(subjSel.value);
+      fillCategorySelect(catSel, subjSel.value, c ? c.id : lastC);
+    }
+    lastC = catSel.value;
+    onChange();
+  });
+  return {
+    set(subjectId, categoryId) {
+      fillSubjectSelect(subjSel, subjectId);
+      fillCategorySelect(catSel, subjSel.value, categoryId);
+      lastS = subjSel.value;
+      lastC = catSel.value;
+      onChange();
+    },
+    value() {
+      const sv = subjSel.value;
+      const cv = catSel.value;
+      return { subjectId: sv && sv !== NEW ? sv : null, categoryId: sv && cv && cv !== NEW ? cv : null };
+    },
+  };
+}
+const realId = (x) => (x && x !== NONE ? x : null);
+const samePlace = (a, b) => a.subjectId === b.subjectId && a.categoryId === b.categoryId;
+// posizione attuale di una voce, nel formato di placePicker().value()
+function currentPlace(e) {
+  const p = placeOf(e);
+  return { subjectId: realId(p.subjectId), categoryId: realId(p.categoryId) };
+}
+function placeLabel({ subjectId, categoryId }) {
+  if (!subjectId) return 'Senza soggetto';
+  return categoryId ? `${subjectName(subjectId)} › ${categoryName(categoryId)}` : subjectName(subjectId);
+}
+
+const editPlace = placePicker($('e-subject'), $('e-category'));
+
+// ---- Sposta in un altro soggetto / categoria (conferma tenendo premuto) ----
+const movePlace = placePicker($('mv-subject'), $('mv-category'), () => {
+  const e = findEntry(currentId);
+  $('mv-ok').disabled = !e || samePlace(movePlace.value(), currentPlace(e));
 });
-$('e-category').addEventListener('change', async () => {
-  if ($('e-category').value === NEW) {
-    const c = await createCategory($('e-subject').value);
-    fillCategorySelect($('e-subject').value, c ? c.id : lastCategoryValue);
-  }
-  lastCategoryValue = $('e-category').value;
+function openMove() {
+  const e = findEntry(currentId);
+  if (!e) return;
+  $('mv-name').textContent = e.title;
+  $('mv-from').textContent = placeLabel(currentPlace(e));
+  movePlace.set(currentPlace(e).subjectId, currentPlace(e).categoryId);
+  $('dlg-detail').close();
+  openDialog($('dlg-move'));
+}
+const moveStop = bindHold($('mv-ok'), async () => {
+  const e = findEntry(currentId);
+  const to = movePlace.value();
+  if (!e || samePlace(to, currentPlace(e))) return;
+  V.upsertEntry(S.data, { id: e.id, ...to });
+  await persistLocal();
+  $('dlg-move').close();
+  renderList();
+  scheduleSync();
+  toast(`Spostata in ${placeLabel(to)}`);
 });
+$('dlg-move').addEventListener('close', moveStop);
+$('d-move').addEventListener('click', openMove);
 
 function openEdit(id) {
   const e = id ? findEntry(id) : null;
   currentId = e ? id : null;
   $('e-heading').textContent = e ? 'Modifica voce' : 'Nuova voce';
   // per una nuova voce propone il soggetto/categoria selezionati nei filtri
-  const real = (x) => (x && x !== NONE ? x : null);
-  const p = e ? placeOf(e) : null;
-  const subjectId = e ? real(p.subjectId) : real(S.filter.subjectId);
-  const categoryId = e ? real(p.categoryId) : real(S.filter.categoryId);
-  fillSubjectSelect(subjectId);
-  fillCategorySelect($('e-subject').value, categoryId);
-  lastSubjectValue = $('e-subject').value;
-  lastCategoryValue = $('e-category').value;
+  if (e) editPlace.set(currentPlace(e).subjectId, currentPlace(e).categoryId);
+  else editPlace.set(realId(S.filter.subjectId), realId(S.filter.categoryId));
   $('e-title').value = e?.title || '';
   $('e-user').value = e?.username || '';
   $('e-pwd').value = e?.password || '';
@@ -1215,11 +1323,12 @@ $('e-gen').addEventListener('click', () => {
 
 $('form-edit').addEventListener('submit', async (ev) => {
   ev.preventDefault();
-  const sv = $('e-subject').value;
-  const cv = $('e-category').value;
+  const place = editPlace.value();
+  const old = currentId ? findEntry(currentId) : null;
+  if (old && !samePlace(place, currentPlace(old))
+    && !(await holdBox('Spostare la password?', `"${old.title}" passerà da ${placeLabel(currentPlace(old))} a ${placeLabel(place)}.`, 'Tieni premuto per spostare'))) return;
   const entry = {
-    subjectId: sv && sv !== NEW ? sv : null,
-    categoryId: sv && cv && cv !== NEW ? cv : null,
+    ...place,
     title: $('e-title').value.trim(),
     username: $('e-user').value.trim(),
     password: $('e-pwd').value,

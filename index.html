@@ -131,7 +131,31 @@
         <p id="d-updated" class="muted small"></p>
       </div>
       <footer class="dlg-foot">
+        <button id="d-move" class="btn" type="button">Sposta</button>
+        <span class="grow"></span>
         <button id="d-edit" class="btn primary" type="button">Modifica</button>
+      </footer>
+    </div>
+  </dialog>
+
+  <!-- SPOSTA -->
+  <dialog id="dlg-move">
+    <div class="dlg">
+      <header class="dlg-head">
+        <h2>Sposta password</h2>
+        <button class="icon-btn" data-close type="button" aria-label="Chiudi">✕</button>
+      </header>
+      <div class="stack">
+        <p class="muted"><b id="mv-name"></b><br>Ora in: <span id="mv-from"></span></p>
+        <div class="two-col">
+          <label>Nuovo soggetto <select id="mv-subject"></select></label>
+          <label>Nuova categoria <select id="mv-category"></select></label>
+        </div>
+      </div>
+      <footer class="dlg-foot">
+        <button class="btn" data-close type="button">Annulla</button>
+        <span class="grow"></span>
+        <button id="mv-ok" class="btn primary hold-btn" type="button"><span class="hold-fill" aria-hidden="true"></span><span class="hold-label">Tieni premuto per spostare</span></button>
       </footer>
     </div>
   </dialog>
@@ -331,6 +355,19 @@
         <button id="cf-ok" class="btn danger" type="submit">Conferma</button>
       </footer>
     </form>
+  </dialog>
+
+  <!-- CONFERMA TENENDO PREMUTO -->
+  <dialog id="dlg-hold">
+    <div class="dlg">
+      <header class="dlg-head"><h2 id="hd-title"></h2></header>
+      <p id="hd-msg" class="muted"></p>
+      <footer class="dlg-foot">
+        <button id="hd-cancel" class="btn" type="button">Annulla</button>
+        <span class="grow"></span>
+        <button id="hd-ok" class="btn primary hold-btn" type="button"><span class="hold-fill" aria-hidden="true"></span><span class="hold-label">Tieni premuto</span></button>
+      </footer>
+    </div>
   </dialog>
 
   <div id="shield" class="shield" hidden>
