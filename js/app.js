@@ -1379,6 +1379,9 @@ function openSettings() {
   renderSettingsDrive();
   renderSettingsBio();
   $('s-autolock').value = String(Number(S.meta.autolockMin) || DEFAULT_AUTOLOCK_MIN);
+  // versione installata = nome della cache del service worker (es. cryptopwd-v13)
+  $('s-version').textContent = '';
+  if (window.caches) caches.keys().then((k) => { const v = k.filter((n) => /^cryptopwd-v\d+$/.test(n)).sort((a, b) => a.slice(11) - b.slice(11)).pop(); if (v) $('s-version').textContent = `Versione app: ${v.replace('cryptopwd-', '')}`; }).catch(() => {});
   openDialog($('dlg-settings'));
 }
 $('btn-settings').addEventListener('click', openSettings);

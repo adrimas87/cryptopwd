@@ -1,6 +1,6 @@
 // Service worker: rende l'app disponibile offline.
 // Aumenta VERSION a ogni modifica dei file per forzare l'aggiornamento.
-const VERSION = 'cryptopwd-v12';
+const VERSION = 'cryptopwd-v13';
 const ASSETS = [
   './',
   './index.html',
@@ -20,7 +20,8 @@ const ASSETS = [
 ];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(VERSION).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()));
+  // cache: 'reload' scavalca la cache HTTP (GitHub Pages: 10 minuti), così la nuova versione non contiene file vecchi
+  e.waitUntil(caches.open(VERSION).then((c) => c.addAll(ASSETS.map((u) => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (e) => {
