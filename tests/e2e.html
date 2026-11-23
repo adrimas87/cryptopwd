@@ -489,6 +489,21 @@ try {
   await promptText('SVUOTA');
   await waitFor(() => driveAtts().length === 0, 'allegati eliminati da Drive');
   ok('14. svuotando il cestino gli allegati spariscono da Drive', true);
+
+  // ordinamento: per nome oppure per data di creazione
+  for (const t of ['Ord-Zeta', 'Ord-Alfa', 'Ord-Mezzo']) { await addEntry(t, 'x-' + t); await sleep(20); }
+  const shown = () => [...d().querySelectorAll('#list .item-title')].map((n) => n.textContent).filter((t) => t.startsWith('Ord-'));
+  const setSort = (v) => { $('sort').value = v; $('sort').dispatchEvent(new Event('change')); };
+  setSort('name');
+  await waitFor(() => shown().join() === 'Ord-Alfa,Ord-Mezzo,Ord-Zeta', 'ordine A-Z');
+  ok('15. ordine alfabetico', true);
+  setSort('newest');
+  await waitFor(() => shown().join() === 'Ord-Mezzo,Ord-Alfa,Ord-Zeta', 'ordine più recenti');
+  ok('15. ordine per creazione, più recenti prima', !d().querySelector('#list .group'));
+  setSort('oldest');
+  await waitFor(() => shown().join() === 'Ord-Zeta,Ord-Alfa,Ord-Mezzo', 'ordine meno recenti');
+  ok('15. ordine per creazione, meno recenti prima', true);
+  setSort('name');
 } catch (e) {
   log('FAIL ' + e.message);
   try { log('DEBUG sync=' + $('sync-label').textContent + ' / ' + $('btn-sync').title + ' calls=' + window.fakeDrive.calls.slice(-6).join(',') + ' dlg=' + [...d().querySelectorAll('dialog[open]')].map(x=>x.id) + ' cerr=' + $('c-error').textContent); } catch {}

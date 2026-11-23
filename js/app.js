@@ -862,6 +862,11 @@ function renderList() {
   const f = S.filter;
   const q = $('search').value.trim().toLowerCase();
   const byTitle = (a, b) => (a.title || '').localeCompare(b.title || '', 'it', { sensitivity: 'base' });
+  // Ordinamento scelto (salvato sul dispositivo): per nome, raggruppato; per data di creazione, elenco unico.
+  const sortBy = ['name', 'newest', 'oldest'].includes(S.meta?.sortBy) ? S.meta.sortBy : 'name';
+  $('sort').value = sortBy;
+  const byName = sortBy === 'name';
+  const created = (e) => e.createdAt || e.updatedAt || 0;
 
   const items = V.liveEntries(S.data)
     .map((e) => ({ e, p: placeOf(e) }))
@@ -870,7 +875,7 @@ function renderList() {
     .filter(({ e }) => !q || [e.title, e.username, e.url, e.notes].some((x) => (x || '').toLowerCase().includes(q)));
 
   // Raggruppa: con "Tutti" per soggetto › categoria, con un soggetto per categoria.
-  const groupKey = ({ p }) => (f.categoryId !== ALL ? '' : f.subjectId === ALL ? `${p.subjectId}|${p.categoryId}` : p.categoryId);
+  const groupKey = ({ p }) => (!byName || f.categoryId !== ALL ? '' : f.subjectId === ALL ? `${p.subjectId}|${p.categoryId}` : p.categoryId);
   const groupLabel = ({ p }) => {
     if (f.subjectId === ALL) {
       if (p.subjectId === NONE) return p.categoryId === NONE ? 'Senza soggetto' : categoryName(p.categoryId);
@@ -883,7 +888,8 @@ function renderList() {
     const cn = x.p.categoryId === NONE ? '￿' : categoryName(x.p.categoryId).toLowerCase();
     return f.subjectId === ALL ? `${sn}\u0000${cn}` : cn;
   };
-  items.sort((a, b) => (f.categoryId === ALL ? sortKey(a).localeCompare(sortKey(b), 'it') : 0) || byTitle(a.e, b.e));
+  if (byName) items.sort((a, b) => (f.categoryId === ALL ? sortKey(a).localeCompare(sortKey(b), 'it') : 0) || byTitle(a.e, b.e));
+  else items.sort((a, b) => (sortBy === 'newest' ? created(b.e) - created(a.e) : created(a.e) - created(b.e)) || byTitle(a.e, b.e));
 
   const nodes = [];
   let lastGroup;
@@ -927,6 +933,10 @@ function renderList() {
     : q ? 'Nessun risultato.' : 'Nessuna password in questa sezione. Tocca + per aggiungerne una.';
 }
 $('search').addEventListener('input', renderList);
+$('sort').addEventListener('change', async () => {
+  S.meta = await store.patchMeta({ sortBy: $('sort').value });
+  renderList();
+});
 
 // =====================================================================
 // Dettaglio
@@ -959,7 +969,7 @@ function openDetail(id) {
     el('button', { class: 'btn small-btn', type: 'button', textContent: 'Apri', onclick: () => openAttachment(a, 'open') }),
     el('button', { class: 'icon-btn', type: 'button', title: 'Scarica', ariaLabel: `Scarica ${a.name}`, textContent: '⬇', onclick: () => openAttachment(a, 'download') }),
   ])));
-  $('d-updated').textContent = `Modificato: ${fmtDate(e.updatedAt)}`;
+  $('d-updated').textContent = `${e.createdAt ? `Creato: ${fmtDate(e.createdAt)} · ` : ''}Modificato: ${fmtDate(e.updatedAt)}`;
   maskDetail();
   openDialog($('dlg-detail'));
 }

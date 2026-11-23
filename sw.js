@@ -1,6 +1,6 @@
 // Service worker: rende l'app disponibile offline.
 // Aumenta VERSION a ogni modifica dei file per forzare l'aggiornamento.
-const VERSION = 'cryptopwd-v9';
+const VERSION = 'cryptopwd-v10';
 const ASSETS = [
   './',
   './index.html',
