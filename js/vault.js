@@ -3,7 +3,9 @@
 // data = {
 //   subjects:   [ { id, name, createdAt, updatedAt, deleted? } ],
 //   categories: [ { id, subjectId, name, createdAt, updatedAt, deleted? } ],   // ogni soggetto ha più categorie
-//   entries:    [ { id, subjectId, categoryId, title, username, password, url, notes, createdAt, updatedAt, deleted? } ],
+//   entries:    [ { id, subjectId, categoryId, kind?, title, username, password, url, notes, createdAt, updatedAt, deleted? } ],
+//               kind: 'login' (predefinito) | 'card' (solo carta, senza utente e password)
+//               cards?: [ { id, label, holder, number, expiry, cvc, pin } ]  (anche dentro una voce password)
 //   keyChangedAt
 // }
 // Gli elementi eliminati restano come "tombstone" (id + updatedAt + deleted) così

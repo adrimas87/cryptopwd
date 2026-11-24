@@ -666,6 +666,8 @@ function lock() {
   editAttachments = [];
   $('form-edit').reset();
   for (const id of ['d-pwd', 'd-user', 'd-notes', 'd-title', 'd-path']) $(id).textContent = '';
+  $('d-cards').replaceChildren();
+  $('e-cards').replaceChildren();
   document.body.classList.remove('peek');
   setShield(false);
   showLock();
@@ -710,7 +712,7 @@ function applyPrivacy() {
   if (!on) setShield(false);
   if (S.data) renderList();
   if ($('dlg-detail').open) maskDetail();
-  if ($('dlg-edit').open) $('e-pwd').type = 'password';
+  if ($('dlg-edit').open) for (const n of $('form-edit').querySelectorAll('#e-pwd, .c-cvc, .c-pin')) n.type = 'password';
 }
 async function setPrivacy(on) {
   S.meta = await store.patchMeta({ privacy: on });
@@ -886,7 +888,7 @@ function renderFilters() {
   if (f.subjectId && f.subjectId !== NONE && !subjects.some((s) => s.id === f.subjectId)) S.filter = { subjectId: ALL, categoryId: ALL };
   if (f.subjectId === NONE && !orphanSubj) S.filter = { subjectId: ALL, categoryId: ALL };
 
-  const setSubj = (id) => { S.filter = { subjectId: id, categoryId: ALL }; renderList(); };
+  const setSubj = (id) => { $('search').value = ''; S.filter = { subjectId: id, categoryId: ALL }; renderList(); };
   $('subj-chips').replaceChildren(
     chip('Tutti', S.filter.subjectId === ALL, () => setSubj(ALL)),
     ...subjects.map((s) => chip(s.name, S.filter.subjectId === s.id, () => setSubj(s.id))),
@@ -901,7 +903,7 @@ function renderFilters() {
   const cats = V.categoriesOf(S.data, sid);
   if (S.filter.categoryId && S.filter.categoryId !== NONE && !cats.some((c) => c.id === S.filter.categoryId)) S.filter.categoryId = ALL;
   const orphanCat = entries.some((e) => { const p = placeOf(e); return p.subjectId === sid && p.categoryId === NONE; });
-  const setCat = (id) => { S.filter.categoryId = id; renderList(); };
+  const setCat = (id) => { $('search').value = ''; S.filter.categoryId = id; renderList(); };
   $('cat-chips').replaceChildren(
     chip('Tutte', S.filter.categoryId === ALL, () => setCat(ALL)),
     ...cats.map((c) => chip(c.name, S.filter.categoryId === c.id, () => setCat(c.id))),
@@ -911,13 +913,77 @@ function renderFilters() {
 }
 
 // =====================================================================
+// Carte di credito
+// =====================================================================
+const isCard = (e) => e?.kind === 'card';
+const digitsOf = (s) => String(s || '').replace(/\D/g, '');
+const last4 = (num) => digitsOf(num).slice(-4);
+const fmtCardNumber = (num) => (/^[\d\s-]+$/.test(num || '') ? digitsOf(num).replace(/(\d{4})(?=\d)/g, '$1 ') : num || '');
+function cardBrand(num) {
+  const n = digitsOf(num);
+  if (/^4/.test(n)) return 'Visa';
+  if (/^(5[1-5]|2(2[2-9]|[3-6]\d|7[01]|720))/.test(n)) return 'Mastercard';
+  if (/^3[47]/.test(n)) return 'Amex';
+  if (/^(50|5[6-9]|6[37])/.test(n)) return 'Maestro';
+  return 'Carta';
+}
+// "1227", "12/2027", "12-27" -> "12/27"; altrimenti il testo così com'è
+function fmtExpiry(v) {
+  const m = String(v || '').trim().match(/^(\d{1,2})\s*[/.\-]?\s*(?:20)?(\d{2})$/);
+  if (!m || +m[1] < 1 || +m[1] > 12) return String(v || '').trim();
+  return `${m[1].padStart(2, '0')}/${m[2]}`;
+}
+function isExpired(exp) {
+  const m = fmtExpiry(exp).match(/^(\d{2})\/(\d{2})$/);
+  if (!m) return false;
+  const now = new Date();
+  const y = 2000 + +m[2];
+  return y < now.getFullYear() || (y === now.getFullYear() && +m[1] < now.getMonth() + 1);
+}
+const cardsOf = (e) => e?.cards || [];
+// "Visa •••• 1111 · 09/30" (o il nome dato alla carta al posto del circuito)
+function cardSummary(c) {
+  const parts = [`${c.label || cardBrand(c.number)}${last4(c.number) ? ` •••• ${last4(c.number)}` : ''}`];
+  if (c.expiry) parts.push(fmtExpiry(c.expiry));
+  return parts.join(' · ');
+}
+
+// =====================================================================
+// Ricerca: cerca in tutte le voci (ignora i filtri) e in quasi tutti i campi.
+// Le parole devono esserci tutte; spazi, trattini e punti non contano
+// (es. "4111 1111" trova "4111-1111-..." e un IBAN scritto con o senza spazi).
+// Password, CVC e PIN non vengono mai cercati.
+// =====================================================================
+const norm = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+const compact = (s) => s.replace(/[\s.\-/_]/g, '');
+function searchText(e, p) {
+  return norm([
+    e.title, e.username, e.url, e.notes,
+    ...cardsOf(e).flatMap((c) => [c.label, c.holder, c.number, c.expiry, `carta ${cardBrand(c.number)}`]),
+    p.subjectId !== NONE ? subjectName(p.subjectId) : '',
+    p.categoryId !== NONE ? categoryName(p.categoryId) : '',
+    ...(e.attachments || []).map((a) => a.name),
+  ].filter(Boolean).join('\u0001'));
+}
+function matchesSearch(e, p, q) {
+  const hay = searchText(e, p);
+  const hayC = compact(hay);
+  const words = norm(q).split(/\s+/).filter(Boolean);
+  if (words.every((w) => hay.includes(w) || (compact(w) && hayC.includes(compact(w))))) return true;
+  const qc = compact(norm(q));
+  return qc.length >= 3 && hayC.includes(qc);
+}
+
+// =====================================================================
 // Elenco voci
 // =====================================================================
 function renderList() {
   if (!S.data) return;
   renderFilters();
-  const f = S.filter;
-  const q = $('search').value.trim().toLowerCase();
+  const q = $('search').value.trim();
+  // con una ricerca in corso si cerca ovunque, non solo nel soggetto/categoria selezionati
+  const f = q ? { subjectId: ALL, categoryId: ALL } : S.filter;
+  document.querySelector('.filters').classList.toggle('searching', !!q);
   const byTitle = (a, b) => (a.title || '').localeCompare(b.title || '', 'it', { sensitivity: 'base' });
   // Ordinamento scelto (salvato sul dispositivo): per nome, raggruppato; per data di creazione, elenco unico.
   const sortBy = ['name', 'newest', 'oldest'].includes(S.meta?.sortBy) ? S.meta.sortBy : 'name';
@@ -929,7 +995,7 @@ function renderList() {
     .map((e) => ({ e, p: placeOf(e) }))
     .filter(({ p }) => f.subjectId === ALL || p.subjectId === f.subjectId)
     .filter(({ p }) => f.categoryId === ALL || p.categoryId === f.categoryId)
-    .filter(({ e }) => !q || [e.title, e.username, e.url, e.notes].some((x) => (x || '').toLowerCase().includes(q)));
+    .filter(({ e, p }) => !q || matchesSearch(e, p, q));
 
   // Raggruppa: con "Tutti" per soggetto › categoria, con un soggetto per categoria.
   const groupKey = ({ p }) => (!byName || f.categoryId !== ALL ? '' : f.subjectId === ALL ? `${p.subjectId}|${p.categoryId}` : p.categoryId);
@@ -960,10 +1026,10 @@ function renderList() {
     const e = it.e;
     nodes.push(el('li', { class: 'item' },
       el('button', { class: 'item-main', type: 'button', onclick: () => openDetail(e.id) },
-        el('span', { class: 'avatar', textContent: (e.title || '?').trim().charAt(0).toUpperCase() }),
+        el('span', { class: 'avatar', textContent: isCard(e) ? '💳' : (e.title || '?').trim().charAt(0).toUpperCase() }),
         el('span', { class: 'item-text' },
-          el('span', { class: 'item-title', textContent: (e.title || '(senza nome)') + ((e.attachments || []).length ? ' 📎' : '') }),
-          el('span', { class: 'item-sub', textContent: e.username ? (isPrivate() ? MASK : e.username) : '' }))),
+          el('span', { class: 'item-title', textContent: (e.title || '(senza nome)') + (!isCard(e) && cardsOf(e).length ? ' 💳' : '') + ((e.attachments || []).length ? ' 📎' : '') }),
+          el('span', { class: 'item-sub', textContent: isCard(e) ? (isPrivate() ? MASK : cardsOf(e).map(cardSummary).join(' + ')) : e.username ? (isPrivate() ? MASK : e.username) : '' }))),
       ...(safeUrl(e.url) ? [el('a', {
         class: 'icon-btn', href: safeUrl(e.url), target: '_blank', rel: 'noopener noreferrer',
         title: 'Apri link', ariaLabel: `Apri link di ${e.title}`, textContent: '↗',
@@ -972,10 +1038,13 @@ function renderList() {
         class: 'icon-btn', type: 'button', title: 'Copia utente', ariaLabel: `Copia utente di ${e.title}`, textContent: '👤',
         onclick: () => copy(e.username, 'Utente'),
       })] : []),
-      el('button', {
+      ...(isCard(e) ? (cardsOf(e)[0]?.number ? [el('button', {
+        class: 'icon-btn', type: 'button', title: 'Copia numero carta', ariaLabel: `Copia numero carta di ${e.title}`, textContent: '💳',
+        onclick: () => copy(digitsOf(cardsOf(e)[0].number) || cardsOf(e)[0].number, 'Numero carta'),
+      })] : []) : !e.password ? [] : [el('button', {
         class: 'icon-btn', type: 'button', title: 'Copia password', ariaLabel: `Copia password di ${e.title}`, textContent: '🔑',
         onclick: () => copy(e.password, 'Password'),
-      })));
+      })])));
   }
   $('list').replaceChildren(...nodes);
 
@@ -1014,6 +1083,7 @@ function openDetail(id) {
   $('d-user-row').hidden = !e.username;
   $('d-pwd').dataset.shown = '';
   $('d-pwd-row').hidden = !e.password;
+  $('d-cards-row').hidden = !cardsOf(e).length;
   const url = safeUrl(e.url);
   $('d-url').textContent = e.url || '';
   if (url) { $('d-url').href = url; $('d-open').href = url; } else { $('d-url').removeAttribute('href'); $('d-open').removeAttribute('href'); }
@@ -1031,28 +1101,35 @@ function openDetail(id) {
   openDialog($('dlg-detail'));
 }
 
-// Ricopre i campi del dettaglio (in modalità riservata anche utente e note).
+// Campi del dettaglio: la password è sempre coperta finché non si tocca 👁,
+// utente e note solo in modalità riservata.
+const plainText = (v) => (isPrivate() ? MASK : v || '');
+
+// Ricopre i campi del dettaglio e ridisegna le carte.
 function maskDetail() {
   const e = currentId && S.data && findEntry(currentId);
   if (!e) return;
-  $('d-user').textContent = isPrivate() ? MASK : e.username || '';
-  $('d-notes').textContent = isPrivate() ? MASK : e.notes || '';
+  $('d-user').textContent = plainText(e.username);
+  $('d-notes').textContent = plainText(e.notes);
   $('d-pwd').textContent = MASK;
   $('d-pwd').dataset.shown = '';
+  renderDetailCards(e);
 }
 
 // Modalità riservata: il valore si vede solo finché si tiene premuto.
-function holdToReveal(trigger, target, field) {
+// reveal() dà il testo in chiaro, masked() quello coperto.
+function holdToReveal(trigger, target, reveal, masked) {
   trigger.addEventListener('pointerdown', (ev) => {
     if (!isPrivate()) return;
     ev.preventDefault();
-    const e = findEntry(currentId);
-    if (!e) return;
-    target.textContent = e[field] || '';
+    const txt = reveal();
+    if (txt == null) return;
+    target.textContent = txt;
     target.classList.add('peeking');
     const hide = () => {
       target.classList.remove('peeking');
-      maskDetail();
+      target.textContent = masked();
+      target.dataset.shown = '';
       window.removeEventListener('pointerup', hide);
       window.removeEventListener('pointercancel', hide);
       window.removeEventListener('blur', hide);
@@ -1062,18 +1139,23 @@ function holdToReveal(trigger, target, field) {
     window.addEventListener('blur', hide);
   });
 }
-holdToReveal($('d-reveal'), $('d-pwd'), 'password');
-holdToReveal($('d-pwd'), $('d-pwd'), 'password');
-holdToReveal($('d-user'), $('d-user'), 'username');
-holdToReveal($('d-notes'), $('d-notes'), 'notes');
+// 👁: un tocco mostra/nasconde (fuori dalla modalità riservata), tenere premuto in modalità riservata.
+function bindReveal(btn, target, reveal, masked) {
+  holdToReveal(btn, target, reveal, masked);
+  holdToReveal(target, target, reveal, masked);
+  btn.addEventListener('click', () => {
+    if (isPrivate()) return toastOnce('Tieni premuto per vedere');
+    const txt = reveal();
+    if (txt == null) return;
+    if (target.dataset.shown) { target.textContent = masked(); target.dataset.shown = ''; }
+    else { target.textContent = txt; target.dataset.shown = '1'; }
+  });
+}
+const entryField = (f) => () => findEntry(currentId)?.[f];
+bindReveal($('d-reveal'), $('d-pwd'), entryField('password'), () => MASK);
+holdToReveal($('d-user'), $('d-user'), entryField('username'), () => plainText(findEntry(currentId)?.username));
+holdToReveal($('d-notes'), $('d-notes'), entryField('notes'), () => plainText(findEntry(currentId)?.notes));
 
-$('d-reveal').addEventListener('click', () => {
-  if (isPrivate()) return toastOnce('Tieni premuto per vedere');
-  const e = findEntry(currentId);
-  const n = $('d-pwd');
-  if (n.dataset.shown) { n.textContent = MASK; n.dataset.shown = ''; }
-  else { n.textContent = e.password; n.dataset.shown = '1'; }
-});
 $('dlg-detail').addEventListener('click', (ev) => {
   const b = ev.target.closest('[data-copy]');
   if (!b) return;
@@ -1081,7 +1163,37 @@ $('dlg-detail').addEventListener('click', (ev) => {
   const f = b.dataset.copy;
   copy(e[f], { username: 'Utente', password: 'Password', url: 'Link' }[f]);
 });
-$('dlg-detail').addEventListener('close', () => { $('d-pwd').textContent = MASK; $('d-pwd').dataset.shown = ''; });
+$('dlg-detail').addEventListener('close', () => { $('d-pwd').textContent = MASK; $('d-pwd').dataset.shown = ''; $('d-cards').replaceChildren(); });
+
+// Carte nel dettaglio: numero coperto (si vedono le ultime 4 cifre), CVC e PIN coperti.
+function renderDetailCards(e) {
+  const blocks = cardsOf(e).map((c) => {
+    const rows = [];
+    const row = (label, valNode, ...btns) => rows.push(el('div', { class: 'field' }, el('span', { class: 'lbl', textContent: label }), valNode, ...btns));
+    const copyBtn = (what, value) => el('button', { class: 'icon-btn', type: 'button', ariaLabel: `Copia ${what.toLowerCase()}`, title: `Copia ${what.toLowerCase()}`, textContent: '⧉', onclick: () => copy(value, what) });
+    const plain = (label, value, mono = false) => {
+      const v = el('span', { class: `val sec${mono ? ' mono' : ''}`, textContent: plainText(value) });
+      holdToReveal(v, v, () => value, () => plainText(value));
+      return v;
+    };
+    const secret = (label, value, masked) => {
+      const v = el('span', { class: 'val mono sec', textContent: masked() });
+      const btn = el('button', { class: 'icon-btn sec', type: 'button', ariaLabel: `Mostra ${label}`, textContent: '👁' });
+      bindReveal(btn, v, () => value, masked);
+      row(label, v, btn, copyBtn(label, label === 'Numero' ? digitsOf(c.number) || c.number : value));
+    };
+    if (c.holder) row('Titolare', plain('Titolare', c.holder), copyBtn('Titolare', c.holder));
+    if (c.number) secret('Numero', fmtCardNumber(c.number), () => (!isPrivate() && last4(c.number) ? `•••• ${last4(c.number)}` : MASK));
+    if (c.expiry) row('Scadenza', plain('Scadenza', fmtExpiry(c.expiry), true), copyBtn('Scadenza', fmtExpiry(c.expiry)));
+    if (c.cvc) secret('CVC', c.cvc, () => MASK);
+    if (c.pin) secret('PIN', c.pin, () => MASK);
+    const title = el('div', { class: 'card-title' }, `💳 ${isPrivate() ? (c.label || 'Carta') : cardSummary(c)}`,
+      ...(isExpired(c.expiry) ? [el('span', { class: 'muted', textContent: ' · scaduta' })] : []));
+    return el('div', { class: 'card-block' }, title, ...rows);
+  });
+  $('d-cards').replaceChildren(...blocks);
+}
+
 $('d-edit').addEventListener('click', () => { $('dlg-detail').close(); openEdit(currentId); });
 
 // =====================================================================
@@ -1204,6 +1316,9 @@ function openEdit(id) {
   $('e-user').value = e?.username || '';
   $('e-pwd').value = e?.password || '';
   $('e-pwd').type = 'password';
+  $('e-cards').replaceChildren(...cardsOf(e).map(cardEditor));
+  $('e-kind').value = isCard(e) ? 'card' : 'login';
+  applyEditKind();
   $('e-url').value = e?.url || '';
   $('e-notes').value = e?.notes || '';
   $('e-delete').hidden = !e;
@@ -1215,6 +1330,58 @@ function openEdit(id) {
 }
 
 $('btn-add').addEventListener('click', () => openEdit(null));
+
+// Tipo di voce: password/account (con eventuali carte collegate, es. il conto in banca)
+// oppure solo carta, senza utente e password.
+function applyEditKind() {
+  const card = $('e-kind').value === 'card';
+  $('e-login-fields').hidden = card;
+  $('e-title').placeholder = card ? 'es. Visa Intesa, Bancomat Poste…' : 'es. Banca, Gmail…';
+  if (card && !$('e-cards').children.length) $('e-cards').append(cardEditor({}));
+}
+$('e-kind').addEventListener('change', applyEditKind);
+
+// Riquadro di modifica di una carta (titolare, numero, scadenza, CVC, PIN).
+function cardEditor(c) {
+  const input = (cls, props) => el('input', { class: cls, autocomplete: 'off', spellcheck: false, ...props });
+  const label = input('c-label', { maxLength: 100, placeholder: 'Nome carta (es. Visa, Bancomat) — facoltativo', value: c.label || '' });
+  const holder = input('c-holder', { maxLength: 200, placeholder: 'Nome come sulla carta', autocapitalize: 'characters', value: c.holder || '' });
+  const num = input('c-num', { maxLength: 40, inputMode: 'numeric', placeholder: '1234 5678 9012 3456', value: fmtCardNumber(c.number) });
+  const exp = input('c-exp', { maxLength: 7, inputMode: 'numeric', placeholder: 'MM/AA', value: c.expiry || '' });
+  const cvc = input('c-cvc', { type: 'password', maxLength: 4, inputMode: 'numeric', value: c.cvc || '' });
+  const pin = input('c-pin', { type: 'password', maxLength: 12, inputMode: 'numeric', value: c.pin || '' });
+  num.addEventListener('blur', () => { num.value = fmtCardNumber(num.value.trim()); });
+  exp.addEventListener('blur', () => { exp.value = fmtExpiry(exp.value); });
+  const reveal = el('button', { class: 'btn small-btn sec align-start', type: 'button', textContent: '👁 Mostra CVC e PIN' });
+  bindFormReveal(reveal, [cvc, pin]);
+  const box = el('fieldset', { class: 'card-edit', dataset: { id: c.id || V.newId() } },
+    el('div', { class: 'card-edit-head' }, el('span', { textContent: '💳' }), label,
+      el('button', { class: 'icon-btn', type: 'button', title: 'Rimuovi carta', ariaLabel: 'Rimuovi carta', textContent: '✕',
+        onclick: async () => {
+          const what = label.value.trim() || (last4(num.value) ? `•••• ${last4(num.value)}` : 'questa carta');
+          if (!(await confirmBox('Rimuovere la carta?', `"${what}" verrà tolta da questa voce quando premi Salva.`, 'Rimuovi'))) return;
+          box.remove();
+        } })),
+    el('label', {}, 'Titolare', holder),
+    el('label', {}, 'Numero carta', el('span', { class: 'input-row' }, num,
+      el('button', { class: 'icon-btn', type: 'button', title: 'Copia numero carta', ariaLabel: 'Copia numero carta', textContent: '⧉',
+        onclick: () => copy(digitsOf(num.value) || num.value, 'Numero carta') }))),
+    el('div', { class: 'three-col' }, el('label', {}, 'Scadenza', exp), el('label', {}, 'CVC', cvc), el('label', {}, 'PIN', pin)),
+    reveal);
+  return box;
+}
+// Carte come sono ora nel modulo (le carte lasciate vuote non si salvano).
+function editCards() {
+  return [...$('e-cards').querySelectorAll('.card-edit')].map((b) => {
+    const v = (cls) => b.querySelector(cls).value.trim();
+    return { id: b.dataset.id, label: v('.c-label'), holder: v('.c-holder'), number: fmtCardNumber(v('.c-num')), expiry: fmtExpiry(v('.c-exp')), cvc: v('.c-cvc'), pin: v('.c-pin') };
+  }).filter((c) => c.label || c.holder || c.number || c.expiry || c.cvc || c.pin);
+}
+$('e-add-card').addEventListener('click', () => {
+  const box = cardEditor({});
+  $('e-cards').append(box);
+  box.querySelector('.c-holder').focus();
+});
 
 function renderEditAttachments() {
   $('e-att-list').replaceChildren(...editAttachments.map((a) => attRow(a, [
@@ -1231,7 +1398,7 @@ function renderEditAttachments() {
 // Il blocco automatico invece chiude sempre senza chiedere (closeAllDialogs).
 let editSnapshot = '';
 function editState() {
-  return JSON.stringify([...['e-subject', 'e-category', 'e-title', 'e-user', 'e-pwd', 'e-url', 'e-notes'].map((id) => $(id).value), editAttachments.map((a) => a.id)]);
+  return JSON.stringify([...['e-subject', 'e-category', 'e-kind', 'e-title', 'e-user', 'e-pwd', 'e-url', 'e-notes'].map((id) => $(id).value), editCards(), editAttachments.map((a) => a.id)]);
 }
 async function closeEditSafely() {
   if (editState() !== editSnapshot
@@ -1297,23 +1464,28 @@ $('e-att-file').addEventListener('change', async (ev) => {
     }
   }
 });
-$('e-reveal').addEventListener('click', () => {
-  if (isPrivate()) return toastOnce('Tieni premuto per vedere');
-  $('e-pwd').type = $('e-pwd').type === 'password' ? 'text' : 'password';
-});
-// in modalità riservata: utente, password e note del modulo visibili solo tenendo premuto 👁
-$('e-reveal').addEventListener('pointerdown', (ev) => {
-  if (!isPrivate()) return;
-  ev.preventDefault();
-  document.body.classList.add('peek');
-  $('e-pwd').type = 'text';
-  const hide = () => {
-    document.body.classList.remove('peek');
-    $('e-pwd').type = 'password';
-    for (const t of ['pointerup', 'pointercancel', 'blur']) window.removeEventListener(t, hide);
-  };
-  for (const t of ['pointerup', 'pointercancel', 'blur']) window.addEventListener(t, hide);
-});
+// 👁 nel modulo: un tocco mostra/nasconde; in modalità riservata i campi personali
+// del modulo sono visibili solo finché si tiene premuto.
+function bindFormReveal(btn, inputs) {
+  btn.addEventListener('click', () => {
+    if (isPrivate()) return toastOnce('Tieni premuto per vedere');
+    const show = inputs[0].type === 'password';
+    for (const i of inputs) i.type = show ? 'text' : 'password';
+  });
+  btn.addEventListener('pointerdown', (ev) => {
+    if (!isPrivate()) return;
+    ev.preventDefault();
+    document.body.classList.add('peek');
+    for (const i of inputs) i.type = 'text';
+    const hide = () => {
+      document.body.classList.remove('peek');
+      for (const i of inputs) i.type = 'password';
+      for (const t of ['pointerup', 'pointercancel', 'blur']) window.removeEventListener(t, hide);
+    };
+    for (const t of ['pointerup', 'pointercancel', 'blur']) window.addEventListener(t, hide);
+  });
+}
+bindFormReveal($('e-reveal'), [$('e-pwd')]);
 $('e-gen').addEventListener('click', () => {
   const len = Math.min(64, Math.max(8, Number($('g-len').value) || 20));
   $('e-pwd').value = C.generatePassword(len, { lower: true, upper: true, digits: true, symbols: $('g-sym').checked });
@@ -1327,11 +1499,19 @@ $('form-edit').addEventListener('submit', async (ev) => {
   const old = currentId ? findEntry(currentId) : null;
   if (old && !samePlace(place, currentPlace(old))
     && !(await holdBox('Spostare la password?', `"${old.title}" passerà da ${placeLabel(currentPlace(old))} a ${placeLabel(place)}.`, 'Tieni premuto per spostare'))) return;
+  const card = $('e-kind').value === 'card';
+  const cards = editCards();
+  if (card && !cards.length) return toast('Inserisci i dati della carta');
+  if (card && ($('e-user').value.trim() || $('e-pwd').value)
+    && !(await confirmBox('Solo carta?', 'Con il tipo "Solo carta" utente e password di questa voce verranno cancellati. Per tenerli insieme alle carte scegli il tipo "Password / account".', 'Cancella utente e password'))) return;
   const entry = {
     ...place,
+    kind: card ? 'card' : 'login',
     title: $('e-title').value.trim(),
-    username: $('e-user').value.trim(),
-    password: $('e-pwd').value,
+    // "solo carta": niente utente e password
+    username: card ? '' : $('e-user').value.trim(),
+    password: card ? '' : $('e-pwd').value,
+    cards,
     url: $('e-url').value.trim(),
     notes: $('e-notes').value,
     attachments: editAttachments,

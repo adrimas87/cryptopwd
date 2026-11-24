@@ -573,6 +573,65 @@ try {
   chipBtn('cat-chips', 'Vecchie').click();
   await waitFor(() => titles().join() === 'Ord-Alfa', 'Ord-Alfa in Archivio › Vecchie');
   ok('17. password spostata in Archivio › Vecchie', true);
+
+  // 18. Carte (da sole e dentro una voce password) + ricerca globale
+  const cardBoxes = () => [...$('e-cards').querySelectorAll('.card-edit')];
+  const fillCard = (box, v) => { for (const [k, x] of Object.entries(v)) { const n = box.querySelector('.c-' + k); n.value = x; n.dispatchEvent(new Event('blur')); } };
+  chipBtn('subj-chips', 'Tutti').click();
+  $('btn-add').click();
+  $('e-kind').value = 'card'; $('e-kind').dispatchEvent(new Event('change'));
+  ok('18. solo carta: riquadro carta pronto, utente/password nascosti', cardBoxes().length === 1 && $('e-login-fields').hidden);
+  fill('e-title', 'Visa Test');
+  fillCard(cardBoxes()[0], { holder: 'MARIO ROSSI', num: '4111111111111111', exp: '0930', cvc: '123', pin: '98765' });
+  ok('18. scadenza e numero formattati', cardBoxes()[0].querySelector('.c-exp').value === '09/30' && cardBoxes()[0].querySelector('.c-num').value === '4111 1111 1111 1111');
+  $('form-edit').requestSubmit();
+  await waitFor(() => !$('dlg-edit').open, 'carta salvata');
+  chipBtn('subj-chips', 'Archivio').click(); // la carta non è in Archivio: la ricerca deve trovarla lo stesso
+  fill('search', '4111 1111');
+  await waitFor(() => titles().join() === 'Visa Test', 'ricerca per numero carta (con spazi, anche fuori dal filtro)');
+  ok('18. ricerca numero carta ovunque', true);
+  ok('18. elenco mostra solo ultime 4 cifre', [...d().querySelectorAll('#list .item-sub')].map((n) => n.textContent).join() === 'Visa •••• 1111 · 09/30');
+  d().querySelector('#list .item-main').click();
+  await waitFor(() => $('dlg-detail').open, 'dettaglio carta');
+  const vals = () => [...$('d-cards').querySelectorAll('.val')].map((n) => n.textContent);
+  ok('18. numero, CVC e PIN coperti', vals().join('|') === 'MARIO ROSSI|•••• 1111|09/30|••••••••|••••••••');
+  const eyes = [...$('d-cards').querySelectorAll('button')].filter((b) => b.textContent === '👁');
+  eyes[0].click(); eyes[2].click();
+  ok('18. 👁 mostra numero a gruppi e PIN', vals().join('|') === 'MARIO ROSSI|4111 1111 1111 1111|09/30|••••••••|98765');
+  ok('18. riga password nascosta per la carta', $('d-pwd-row').hidden);
+  $('dlg-detail').close();
+
+  // voce password della banca con due carte
+  fill('search', '');
+  $('btn-add').click();
+  fill('e-title', 'Banca Due'); fill('e-user', 'utente-banca'); fill('e-pwd', 'pw-banca');
+  $('e-add-card').click(); $('e-add-card').click();
+  fillCard(cardBoxes()[0], { label: 'Bancomat', num: '5555 4444 3333 2222', pin: '11111' });
+  fillCard(cardBoxes()[1], { label: 'Amex', num: '378282246310005', cvc: '4321' });
+  $('form-edit').requestSubmit();
+  await waitFor(() => !$('dlg-edit').open, 'banca salvata');
+  fill('search', '310005');
+  await waitFor(() => titles().join() === 'Banca Due', 'ricerca seconda carta della banca');
+  ok('18. voce password con più carte, ricerca sulla seconda', d().querySelector('#list .item-title').textContent.includes('💳'));
+  d().querySelector('#list .item-main').click();
+  await waitFor(() => $('dlg-detail').open, 'dettaglio banca');
+  ok('18. dettaglio: utente + 2 carte', !$('d-user-row').hidden && $('d-cards').querySelectorAll('.card-block').length === 2);
+  $('d-edit').click();
+  await waitFor(() => $('dlg-edit').open, 'modifica banca');
+  ok('18. in modifica le 2 carte restano', cardBoxes().length === 2 && cardBoxes()[1].querySelector('.c-cvc').value === '4321');
+  $('dlg-edit').close();
+
+  fill('search', 'mario');
+  await waitFor(() => titles().join() === 'Visa Test', 'ricerca per titolare');
+  fill('search', '98765');
+  await waitFor(() => titles().length === 0, 'il PIN non si cerca');
+  ok('18. PIN non ricercabile', true);
+  fill('search', 'archivio vecchie');
+  await waitFor(() => titles().join() === 'Ord-Alfa', 'ricerca per nome di soggetto e categoria');
+  ok('18. ricerca per soggetto/categoria', true);
+  fill('search', '');
+  await waitFor(async () => (await driveData(P2)).entries.some((e) => (e.cards || []).length === 2), 'carte su Drive');
+  ok('18. carte sincronizzate su Drive (cifrate)', !vaultFile().content.includes('98765') && !vaultFile().content.includes('4321'));
 } catch (e) {
   log('FAIL ' + e.message);
   try { log('DEBUG sync=' + $('sync-label').textContent + ' / ' + $('btn-sync').title + ' calls=' + window.fakeDrive.calls.slice(-6).join(',') + ' dlg=' + [...d().querySelectorAll('dialog[open]')].map(x=>x.id) + ' cerr=' + $('c-error').textContent); } catch {}

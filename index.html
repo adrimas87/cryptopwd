@@ -74,7 +74,7 @@
       <button id="btn-lock" class="icon-btn" type="button" aria-label="Blocca">🔒</button>
     </header>
     <div class="searchbar">
-      <input id="search" type="search" placeholder="Cerca…" autocomplete="off" spellcheck="false">
+      <input id="search" type="search" placeholder="Cerca sito, utente, numero carta, note…" aria-label="Cerca in tutte le voci" autocomplete="off" spellcheck="false">
       <select id="sort" aria-label="Ordina le password" title="Ordina">
         <option value="name">A → Z</option>
         <option value="newest">Più recenti</option>
@@ -105,14 +105,18 @@
       <div class="fields">
         <div class="field" id="d-user-row">
           <span class="lbl">Utente</span>
-          <span id="d-user" class="val"></span>
+          <span id="d-user" class="val sec"></span>
           <button class="icon-btn" data-copy="username" type="button" aria-label="Copia utente">⧉</button>
         </div>
         <div class="field" id="d-pwd-row">
           <span class="lbl">Password</span>
-          <span id="d-pwd" class="val mono">••••••••</span>
-          <button id="d-reveal" class="icon-btn" type="button" aria-label="Mostra">👁</button>
+          <span id="d-pwd" class="val mono sec">••••••••</span>
+          <button id="d-reveal" class="icon-btn sec" type="button" aria-label="Mostra">👁</button>
           <button class="icon-btn" data-copy="password" type="button" aria-label="Copia password">⧉</button>
+        </div>
+        <div class="field col" id="d-cards-row">
+          <span class="lbl">Carte</span>
+          <div id="d-cards" class="cards"></div>
         </div>
         <div class="field" id="d-url-row">
           <span class="lbl">Link</span>
@@ -126,7 +130,7 @@
         </div>
         <div class="field col" id="d-notes-row">
           <span class="lbl">Note</span>
-          <pre id="d-notes" class="val notes"></pre>
+          <pre id="d-notes" class="val notes sec"></pre>
         </div>
         <p id="d-updated" class="muted small"></p>
       </div>
@@ -172,8 +176,15 @@
           <label>Soggetto <select id="e-subject"></select></label>
           <label>Categoria <select id="e-category"></select></label>
         </div>
+        <label>Tipo
+          <select id="e-kind">
+            <option value="login">🔑 Password / account</option>
+            <option value="card">💳 Solo carta (senza utente e password)</option>
+          </select>
+        </label>
         <label>Nome <input id="e-title" required maxlength="200" placeholder="es. Banca, Gmail…"></label>
         <label>Link <input id="e-url" type="text" inputmode="url" maxlength="2000" autocapitalize="off" spellcheck="false" placeholder="https://…"></label>
+        <div id="e-login-fields" class="stack">
         <label>Utente / email
           <span class="input-row">
             <input id="e-user" maxlength="500" autocapitalize="off" spellcheck="false">
@@ -183,7 +194,7 @@
         <label>Password
           <span class="input-row">
             <input id="e-pwd" type="password" maxlength="1000" autocapitalize="off" spellcheck="false" autocomplete="off">
-            <button id="e-reveal" class="icon-btn" type="button" aria-label="Mostra">👁</button>
+            <button id="e-reveal" class="icon-btn sec" type="button" aria-label="Mostra">👁</button>
             <button id="e-gen" class="icon-btn" type="button" aria-label="Genera" title="Genera password">🎲</button>
             <button id="e-copy-pwd" class="icon-btn" type="button" aria-label="Copia password" title="Copia password">⧉</button>
           </span>
@@ -191,6 +202,14 @@
         <div class="gen-opts">
           <label class="inline">Lunghezza <input id="g-len" type="number" min="8" max="64" value="20"></label>
           <label class="check"><input id="g-sym" type="checkbox" checked> Simboli</label>
+        </div>
+        </div>
+        <div class="attach">
+          <div class="attach-head">
+            <span class="attach-title">Carte</span>
+            <button id="e-add-card" class="btn small-btn" type="button">💳 Aggiungi carta</button>
+          </div>
+          <div id="e-cards" class="cards"></div>
         </div>
         <label>Note <textarea id="e-notes" rows="4" maxlength="10000"></textarea></label>
         <div class="attach">

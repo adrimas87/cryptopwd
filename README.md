@@ -23,6 +23,8 @@ Gestore di password personale, utilizzabile da qualsiasi dispositivo (telefono, 
 
 - **Soggetti e categorie**: ogni password appartiene a un *soggetto* (te, un familiare, la tua azienda…) e a una delle sue *categorie* (Banca, Email, PEC…). Ogni soggetto ha le proprie categorie. Si filtra con i chip in alto e si gestiscono con ✎ (rinomina ed elimina; un soggetto o una categoria che contiene ancora password non si può eliminare).
 - **Modalità riservata** (pulsante 🛡), per quando qualcuno potrebbe vedere lo schermo (es. desktop remoto collegato): utenti, password e note coperti e visibili solo tenendo premuto, contenuto nascosto quando la finestra perde il focus, avviso prima di copiare (gli strumenti di desktop remoto possono trasmettere gli appunti). **Doppio Esc** blocca subito l'app. Non impedisce la cattura dello schermo: riduce ciò che si vede.
+- **Carte di credito / bancomat**: titolare, numero, scadenza, CVC e PIN. Una carta può essere una voce a sé (tipo "Solo carta") oppure stare dentro una voce password, ad esempio quella della banca, che può contenere più carte. Numero (si vedono solo le ultime 4 cifre), CVC e PIN restano coperti finché non tocchi 👁.
+- **Ricerca**: il campo "Cerca" trova le voci in tutti i soggetti e categorie, cercando in nome, sito, utente, note, titolare/numero/scadenza delle carte, nomi di soggetti, categorie e allegati. Spazi e trattini non contano (es. `4111 1111` trova `4111-1111-…`). Password, CVC e PIN non vengono mai cercati.
 - **Allegati**: a ogni password puoi allegare file (max 10 MB ciascuno). Le foto vengono ridotte automaticamente (lato lungo 1600 px, JPEG) e perdono i metadati EXIF come la posizione GPS: una foto da 2-5 MB diventa di solito qualche centinaio di kB. Sono cifrati con una chiave propria, salvati su Drive come file separati (`cryptopwd-att-….bin`) e disponibili anche offline.
 - **Sblocco con impronta o volto** (Impostazioni → Sicurezza): sul telefono sblocchi l'app con il sensore biometrico invece di scrivere la password principale. Usa una passkey con l'estensione WebAuthn PRF: la password principale viene cifrata sul dispositivo con una chiave che l'autenticatore rilascia solo dopo la verifica biometrica. Richiede Chrome su Android aggiornato o iOS 18+; se il browser non supporta PRF l'opzione viene rifiutata. Vale per un solo dispositivo; se cambi la password principale, l'app chiede di riconfermare con l'impronta.
 - **Cestino**: le password eliminate si possono ripristinare; "Svuota cestino" richiede di scrivere SVUOTA.
@@ -119,7 +121,7 @@ Dopo aver modificato i file, aumenta `VERSION` in [sw.js](sw.js) (es. `cryptopwd
 ## Test
 
 - [tests/test.html](tests/test.html): test di cifratura, unione e CSV. Apri `http://localhost:8765/tests/test.html`.
-- [tests/e2e.html](tests/e2e.html): test end-to-end con Google Drive simulato (creazione, ripristino su un altro dispositivo, unione offline, cambio password, lettura offline, eliminazione). Prima di avviarlo imposta un `GOOGLE_CLIENT_ID` qualsiasi, diverso dal segnaposto, in `js/config.js`.
+- [tests/e2e.html](tests/e2e.html): test end-to-end con Google Drive simulato (creazione, ripristino su un altro dispositivo, unione offline, cambio password, lettura offline, eliminazione, carte e ricerca). Prima di avviarlo imposta un `GOOGLE_CLIENT_ID` qualsiasi, diverso dal segnaposto, in `js/config.js`.
 
 ## Struttura
 
