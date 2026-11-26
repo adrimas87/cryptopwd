@@ -156,6 +156,7 @@ textarea { resize: vertical; }
 .item-title, .item-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .item-title { font-weight: 600; }
 .item-sub { font-size: .85rem; color: var(--muted); }
+.item-path { font-size: .75rem; color: var(--primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .fab {
   position: fixed; right: calc(20px + env(safe-area-inset-right)); bottom: calc(20px + env(safe-area-inset-bottom));

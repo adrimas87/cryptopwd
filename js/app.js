@@ -1014,6 +1014,12 @@ function renderList() {
   if (byName) items.sort((a, b) => (f.categoryId === ALL ? sortKey(a).localeCompare(sortKey(b), 'it') : 0) || byTitle(a.e, b.e));
   else items.sort((a, b) => (sortBy === 'newest' ? created(b.e) - created(a.e) : created(a.e) - created(b.e)) || byTitle(a.e, b.e));
 
+  // senza intestazioni di gruppo (ordine per data) la posizione si mostra su ogni voce
+  const itemPath = ({ e, p }) => {
+    if (byName || f.categoryId !== ALL) return '';
+    if (f.subjectId === ALL) return pathText(e);
+    return p.categoryId === NONE ? '' : categoryName(p.categoryId);
+  };
   const nodes = [];
   let lastGroup;
   // intestazioni solo se aiutano: più gruppi, oppure un unico gruppo con un nome vero
@@ -1029,7 +1035,8 @@ function renderList() {
         el('span', { class: 'avatar', textContent: isCard(e) ? '💳' : (e.title || '?').trim().charAt(0).toUpperCase() }),
         el('span', { class: 'item-text' },
           el('span', { class: 'item-title', textContent: (e.title || '(senza nome)') + (!isCard(e) && cardsOf(e).length ? ' 💳' : '') + ((e.attachments || []).length ? ' 📎' : '') }),
-          el('span', { class: 'item-sub', textContent: isCard(e) ? (isPrivate() ? MASK : cardsOf(e).map(cardSummary).join(' + ')) : e.username ? (isPrivate() ? MASK : e.username) : '' }))),
+          el('span', { class: 'item-sub', textContent: isCard(e) ? (isPrivate() ? MASK : cardsOf(e).map(cardSummary).join(' + ')) : e.username ? (isPrivate() ? MASK : e.username) : '' }),
+          ...(itemPath(it) ? [el('span', { class: 'item-path', textContent: itemPath(it) })] : []))),
       ...(safeUrl(e.url) ? [el('a', {
         class: 'icon-btn', href: safeUrl(e.url), target: '_blank', rel: 'noopener noreferrer',
         title: 'Apri link', ariaLabel: `Apri link di ${e.title}`, textContent: '↗',
