@@ -1194,9 +1194,10 @@ function renderDetailCards(e) {
     if (c.expiry) row('Scadenza', plain('Scadenza', fmtExpiry(c.expiry), true), copyBtn('Scadenza', fmtExpiry(c.expiry)));
     if (c.cvc) secret('CVC', c.cvc, () => MASK);
     if (c.pin) secret('PIN', c.pin, () => MASK);
-    const title = el('div', { class: 'card-title' }, `💳 ${isPrivate() ? (c.label || 'Carta') : cardSummary(c)}`,
+    // Tendina: chiusa si vede solo il riepilogo, toccando si apre con i dati.
+    const title = el('summary', { class: 'card-title' }, `💳 ${isPrivate() ? (c.label || 'Carta') : cardSummary(c)}`,
       ...(isExpired(c.expiry) ? [el('span', { class: 'muted', textContent: ' · scaduta' })] : []));
-    return el('div', { class: 'card-block' }, title, ...rows);
+    return el('details', { class: 'card-block' }, title, el('div', { class: 'card-body' }, ...rows));
   });
   $('d-cards').replaceChildren(...blocks);
 }
@@ -1323,7 +1324,7 @@ function openEdit(id) {
   $('e-user').value = e?.username || '';
   $('e-pwd').value = e?.password || '';
   $('e-pwd').type = 'password';
-  $('e-cards').replaceChildren(...cardsOf(e).map(cardEditor));
+  $('e-cards').replaceChildren(...cardsOf(e).map((c) => cardEditor(c)));
   $('e-kind').value = isCard(e) ? 'card' : 'login';
   applyEditKind();
   $('e-url').value = e?.url || '';
@@ -1344,12 +1345,12 @@ function applyEditKind() {
   const card = $('e-kind').value === 'card';
   $('e-login-fields').hidden = card;
   $('e-title').placeholder = card ? 'es. Visa Intesa, Bancomat Poste…' : 'es. Banca, Gmail…';
-  if (card && !$('e-cards').children.length) $('e-cards').append(cardEditor({}));
+  if (card && !$('e-cards').children.length) $('e-cards').append(cardEditor({}, true));
 }
 $('e-kind').addEventListener('change', applyEditKind);
 
 // Riquadro di modifica di una carta (titolare, numero, scadenza, CVC, PIN).
-function cardEditor(c) {
+function cardEditor(c, open = false) {
   const input = (cls, props) => el('input', { class: cls, autocomplete: 'off', spellcheck: false, ...props });
   const label = input('c-label', { maxLength: 100, placeholder: 'Nome carta (es. Visa, Bancomat) — facoltativo', value: c.label || '' });
   const holder = input('c-holder', { maxLength: 200, placeholder: 'Nome come sulla carta', autocapitalize: 'characters', value: c.holder || '' });
@@ -1361,20 +1362,35 @@ function cardEditor(c) {
   exp.addEventListener('blur', () => { exp.value = fmtExpiry(exp.value); });
   const reveal = el('button', { class: 'btn small-btn sec align-start', type: 'button', textContent: '👁 Mostra CVC e PIN' });
   bindFormReveal(reveal, [cvc, pin]);
-  const box = el('fieldset', { class: 'card-edit', dataset: { id: c.id || V.newId() } },
-    el('div', { class: 'card-edit-head' }, el('span', { textContent: '💳' }), label,
-      el('button', { class: 'icon-btn', type: 'button', title: 'Rimuovi carta', ariaLabel: 'Rimuovi carta', textContent: '✕',
-        onclick: async () => {
-          const what = label.value.trim() || (last4(num.value) ? `•••• ${last4(num.value)}` : 'questa carta');
-          if (!(await confirmBox('Rimuovere la carta?', `"${what}" verrà tolta da questa voce quando premi Salva.`, 'Rimuovi'))) return;
-          box.remove();
-        } })),
+  // Intestazione a tendina: tocca per aprire/chiudere i campi della carta.
+  const sumText = el('span', { class: 'card-edit-sum' });
+  const updateSum = () => {
+    const n = digitsOf(num.value);
+    sumText.textContent = `${label.value.trim() || (n ? cardBrand(n) : 'Nuova carta')}${last4(n) ? ` •••• ${last4(n)}` : ''}${exp.value.trim() ? ` · ${fmtExpiry(exp.value.trim())}` : ''}`;
+  };
+  [label, num, exp].forEach((i) => i.addEventListener('input', updateSum));
+  updateSum();
+  const toggle = el('button', { class: 'card-edit-toggle', type: 'button' }, el('span', { class: 'chev', textContent: '▸' }), el('span', { textContent: '💳' }), sumText);
+  const body = el('div', { class: 'card-edit-body' },
+    el('label', {}, 'Nome carta', label),
     el('label', {}, 'Titolare', holder),
     el('label', {}, 'Numero carta', el('span', { class: 'input-row' }, num,
       el('button', { class: 'icon-btn', type: 'button', title: 'Copia numero carta', ariaLabel: 'Copia numero carta', textContent: '⧉',
         onclick: () => copy(digitsOf(num.value) || num.value, 'Numero carta') }))),
     el('div', { class: 'three-col' }, el('label', {}, 'Scadenza', exp), el('label', {}, 'CVC', cvc), el('label', {}, 'PIN', pin)),
     reveal);
+  const setOpen = (o) => { body.hidden = !o; box.classList.toggle('open', o); toggle.setAttribute('aria-expanded', String(o)); };
+  toggle.addEventListener('click', () => setOpen(body.hidden));
+  const box = el('fieldset', { class: 'card-edit', dataset: { id: c.id || V.newId() } },
+    el('div', { class: 'card-edit-head' }, toggle,
+      el('button', { class: 'icon-btn', type: 'button', title: 'Rimuovi carta', ariaLabel: 'Rimuovi carta', textContent: '✕',
+        onclick: async () => {
+          const what = label.value.trim() || (last4(num.value) ? `•••• ${last4(num.value)}` : 'questa carta');
+          if (!(await confirmBox('Rimuovere la carta?', `"${what}" verrà tolta da questa voce quando premi Salva.`, 'Rimuovi'))) return;
+          box.remove();
+        } })),
+    body);
+  setOpen(open);
   return box;
 }
 // Carte come sono ora nel modulo (le carte lasciate vuote non si salvano).
@@ -1385,7 +1401,7 @@ function editCards() {
   }).filter((c) => c.label || c.holder || c.number || c.expiry || c.cvc || c.pin);
 }
 $('e-add-card').addEventListener('click', () => {
-  const box = cardEditor({});
+  const box = cardEditor({}, true);
   $('e-cards').append(box);
   box.querySelector('.c-holder').focus();
 });

@@ -233,10 +233,19 @@ a.val { color: var(--primary); text-decoration: none; }
 .cards { display: flex; flex-direction: column; gap: 8px; }
 .card-edit { min-width: 0; border: 1px solid var(--border); border-radius: 12px; padding: 10px; margin: 0; display: flex; flex-direction: column; gap: 10px; }
 .card-edit-head { display: flex; gap: 6px; align-items: center; }
-.card-edit-head input { flex: 1; min-width: 0; }
-.card-block { background: var(--surface); border-radius: 10px; padding: 6px; display: flex; flex-direction: column; gap: 2px; }
+.card-edit-toggle { flex: 1; min-width: 0; display: flex; gap: 6px; align-items: center; background: none; border: 0; padding: 4px; color: inherit; font: inherit; font-weight: 600; text-align: left; cursor: pointer; }
+.card-edit-sum { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card-edit-body { display: flex; flex-direction: column; gap: 10px; }
+.card-edit-body[hidden] { display: none; }
+.chev { display: inline-block; transition: transform .15s; }
+.card-edit.open .chev { transform: rotate(90deg); }
+.card-block { background: var(--surface); border-radius: 10px; padding: 6px; }
+.card-body { display: flex; flex-direction: column; gap: 2px; }
 .card-block .field { background: none; padding: 2px 2px 2px 6px; }
-.card-title { font-weight: 600; padding: 4px 6px; }
+.card-title { font-weight: 600; padding: 4px 6px; cursor: pointer; list-style: none; }
+.card-title::-webkit-details-marker { display: none; }
+.card-title::before { content: '▸'; display: inline-block; margin-right: 6px; transition: transform .15s; }
+.card-block[open] > .card-title::before { transform: rotate(90deg); }
 .card-title .muted { font-weight: 400; }
 .filters.searching { opacity: .45; }
 select:disabled { opacity: .6; }
