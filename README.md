@@ -92,7 +92,7 @@ Poi apri <http://localhost:8765>.
 | PC (Chrome/Edge) | icona di installazione nella barra degli indirizzi |
 
 **Primo dispositivo:** "Crea un nuovo archivio", scegli la password principale e lascia attivo "Sincronizza con Google Drive".
-**Altri dispositivi:** "Ripristina da Google Drive", accedi con lo stesso account Google e inserisci la password principale.
+**Altri dispositivi:** "Ripristina da Google Drive", accedi con lo stesso account Google e inserisci la password principale. Se per sbaglio premi "Crea archivio" con un Google Drive che contiene già un archivio, l'app non ne crea un secondo: te lo segnala e propone il ripristino (se la password scritta è quella giusta, ripristina subito).
 
 > Su iPhone installa l'app sulla schermata Home: Safari può cancellare i dati dei siti non visitati da tempo, mentre quelli delle app installate restano. In ogni caso il vault resta su Drive e si ripristina in un attimo.
 

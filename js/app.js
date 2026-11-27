@@ -538,12 +538,23 @@ $('form-create').addEventListener('submit', async (e) => {
   const btn = e.submitter || $('form-create').querySelector('[type=submit]');
   btn.disabled = true;
   try {
+    const linked = await auth;
+    // Se su Drive c'è già un archivio non se ne crea uno nuovo: si propone il ripristino.
+    if (linked) {
+      let file;
+      try { file = await drive.findFile(); } catch (err) { return toast(`Impossibile controllare Google Drive: ${err.message}`, 4000); }
+      if (file) {
+        if (await confirmBox('Archivio già presente su Google Drive',
+          'Su questo Google Drive c\'è già un archivio CryptoPwd. Creandone uno nuovo non ritroveresti le tue password: ripristina quello esistente con la sua password principale.',
+          'Ripristina da Google Drive')) await restoreFromDrive(file, pwd);
+        return;
+      }
+    }
     S.kdf = C.newKdf();
     S.key = await C.deriveKey(pwd, S.kdf);
     S.data = V.emptyVault();
     await persistLocal({ dirty: false });
     $('form-create').reset();
-    const linked = await auth;
     S.meta = await store.patchMeta({ driveLinked: linked });
     enterMain();
     if (linked) sync({ password: pwd });
@@ -558,12 +569,28 @@ $('btn-restore').addEventListener('click', async () => {
     toast('Cerco il vault su Google Drive…');
     const file = await drive.findFile();
     if (!file) return toast('Nessun vault CryptoPwd trovato su questo Google Drive', 4000);
+    await restoreFromDrive(file);
+  } catch (e) {
+    toast(e.message, 4000);
+  }
+});
+
+// Ripristina il vault da Drive. Se è nota una password (quella appena scritta in
+// "Crea archivio") la prova prima di chiederla.
+async function restoreFromDrive(file, guess) {
+  try {
     const blob = await drive.download(file.id);
     let opened = null;
-    const pw = await askPassword('Password principale', 'Inserisci la password principale del vault salvato su Google Drive.', async (v) => {
-      try { opened = await C.openWithPassword(v, blob); return null; } catch (e) { if (e instanceof C.WrongPasswordError) return 'Password errata'; throw e; }
-    });
-    if (pw === null) return;
+    if (guess) {
+      try { opened = await C.openWithPassword(guess, blob); } catch (e) { if (!(e instanceof C.WrongPasswordError)) throw e; }
+    }
+    if (!opened) {
+      const pw = await askPassword('Password principale', 'Inserisci la password principale del vault salvato su Google Drive.', async (v) => {
+        try { opened = await C.openWithPassword(v, blob); return null; } catch (e) { if (e instanceof C.WrongPasswordError) return 'Password errata'; throw e; }
+      });
+      if (pw === null) return;
+    }
+    $('form-create').reset();
     Object.assign(S, { key: opened.key, kdf: opened.kdf, data: V.normalize(opened.data) });
     await store.set('vault', blob);
     // attPending: la prima sincronizzazione deve scaricare anche gli allegati
@@ -574,7 +601,7 @@ $('btn-restore').addEventListener('click', async () => {
   } catch (e) {
     toast(e.message, 4000);
   }
-});
+}
 
 function unlockError(msg) {
   $('unlock-error').textContent = msg;

@@ -88,6 +88,15 @@ try {
   // 2. Dispositivo B: ripristino da Drive
   await deleteDb(); await loadApp();
   await waitFor(() => visible('screen-setup'), 'setup su B');
+  // "Crea archivio" con un archivio già su Drive: propone il ripristino, Drive intatto
+  const before = vaultFile().content;
+  fill('create-pwd', 'altra-password-999'); fill('create-pwd2', 'altra-password-999'); $('create-drive').checked = true;
+  $('form-create').requestSubmit();
+  await waitFor(() => $('dlg-confirm').open, 'avviso archivio già su Drive');
+  ok('2. crea archivio con Drive già usato: avviso', $('cf-title').textContent.includes('già presente'));
+  $('cf-cancel').click();
+  await sleep(300);
+  ok('2. annullando: nessun archivio creato, Drive intatto', visible('screen-setup') && vaultFile().content === before);
   $('btn-restore').click();
   await waitFor(() => $('dlg-prompt').open, 'richiesta password');
   fill('p-input', 'sbagliata'); $('form-prompt').requestSubmit();
@@ -96,6 +105,16 @@ try {
   fill('p-input', P1); $('form-prompt').requestSubmit();
   await waitFor(() => visible('screen-main') && titles().includes('Gmail'), 'Gmail ripristinata');
   ok('2. ripristino su nuovo dispositivo', true);
+
+  // 2b. Dispositivo B di nuovo da zero: "Crea archivio" con la password giusta ripristina subito
+  await deleteDb(); await loadApp();
+  await waitFor(() => visible('screen-setup'), 'setup su B (2)');
+  fill('create-pwd', P1); fill('create-pwd2', P1); $('create-drive').checked = true;
+  $('form-create').requestSubmit();
+  await waitFor(() => $('dlg-confirm').open, 'avviso archivio già su Drive (2)');
+  $('cf-ok').click();
+  await waitFor(() => visible('screen-main') && titles().includes('Gmail'), 'ripristino con la password scritta');
+  ok('2b. con la stessa password il ripristino non la richiede', !$('dlg-prompt').open);
 
   // 3. Modifica offline su B + modifica "da un altro dispositivo" su Drive -> unione
   window.fakeDrive.failNetwork = true;
